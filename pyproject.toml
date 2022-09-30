@@ -1,12 +1,43 @@
-[build-system]
-requires = [
-  "setuptools >= 40.9.0",
-  "wheel",
+
+[project]
+name = "pyroads"
+version = "0.3.7"
+authors = [
+  { name="Shaan Ciantar", email="Shaan.Ciantar@mainroads.wa.gov.au" },
 ]
-build-backend = "setuptools.build_meta"
+description = "For analysis of road asset data"
+readme = "readme.md"
+requires-python = ">=3.7"
+dependencies = [
+  'deprecated ~= 1.2',
+  # to support python 3.7 must use pandas 1.3
+  'pandas ~=1.3; python_version < "3.8"', 
+  'pandas >=1.3; python_version >= "3.8"'
+]
+
+[project.urls]
+"Homepage" = "https://github.com/shaan-nmb/pyroads"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# files to exclude when building distribution that includes source files
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.github",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dtims_odata_connector"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+minversion = "6.0"
+addopts = "-ra -q --tb=short --capture=no"
+# -ra           : (r)show extra test summary (a)ll except passed
+# -q            : quiet
+# --tb=short    : shorter error messages
+# --capture=no  : disable pytest comment capture behaviour
 testpaths = [
-    "test"
+  "test"
 ]
