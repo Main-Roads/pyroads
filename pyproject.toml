@@ -2,12 +2,15 @@
 [project]
 name = "pyroads"
 version = "0.3.7"
+
 authors = [
   { name="Shaan Ciantar", email="Shaan.Ciantar@mainroads.wa.gov.au" },
 ]
+
 description = "For analysis of road asset data"
 readme = "readme.md"
 requires-python = ">=3.7"
+
 dependencies = [
   'deprecated ~= 1.2',
   # to support python 3.7 must use pandas 1.3
