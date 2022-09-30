@@ -1,5 +1,7 @@
 # pyroads
 
+[![Run Tests](https://github.com/Main-Roads/pyroads/actions/workflows/run_tests.yml/badge.svg)](https://github.com/Main-Roads/pyroads/actions/workflows/run_tests.yml)
+
 Python package for analysis of road asset data
 
 ## Installation
