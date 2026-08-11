@@ -14,7 +14,8 @@ def make_segments(
 	max_segment: int = 100, 
 	split_ends: bool = True, 
 	km: bool = True,
-	id: bool = False
+	id: bool = False,
+	as_km: Optional[bool] = None,
 	) -> 'pd.DataFrame':
 
 	"""
@@ -59,6 +60,9 @@ def make_segments(
 	4   H001	12.6       12.7    0.1
 	5   H001	12.7       12.8    0.1
 	"""
+
+	if as_km is not None:
+		km = as_km
 
 	starts = [var for var in [start, start_true] if bool(var)]
 	ends = [var for var in [end, end_true] if bool(var)]

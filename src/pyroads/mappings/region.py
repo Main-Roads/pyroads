@@ -48,6 +48,9 @@ number_to_name = {
 	11: "Pilbara",
 	14: "Mid West-Gascoyne",
 }
+
+map_region_name_to_number = name_to_number
+map_region_number_to_region_name = number_to_name
 """
 Map from region number to region name
 

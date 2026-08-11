@@ -34,6 +34,9 @@ id_to_name = {
 	1: 'Sand Clay',
 	0: 'Unknown',
 }
+
+map_pavement_type_name_to_id = name_to_id
+map_pavement_type_id_to_name = id_to_name
 """
 Map from pavement type name to pavement id
 
