@@ -132,3 +132,25 @@ functionality. Run them with:
 uv run pytest
 ```
 
+## Acknowledgements
+
+The original `pyroads` package was created by Shaan Ciantar. Nicholas Archer
+wrote most of the functionality in the former `merge-segments`,
+`homogeneous-segmentation`, and `segmenter` packages.
+
+Dagmawi Tadesse consolidated these packages into the `pyroads` repository,
+preserving their public APIs for backward compatibility and delivering
+significant performance improvements through NumPy and Numba JIT compilation.
+
+## Disclaimer
+
+This software is made available as an open-source project by Main Roads
+Western Australia.
+
+The software is provided for general use and research purposes. Users are
+responsible for validating the suitability of the software for their own
+applications.
+
+Main Roads Western Australia does not accept responsibility for decisions,
+analyses, asset management outcomes, or other results produced using this
+software.
