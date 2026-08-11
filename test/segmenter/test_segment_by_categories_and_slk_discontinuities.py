@@ -5,7 +5,6 @@
 
 def test_segment_by_categories_and_slk_discontinuities():
     import pandas as pd
-    import numpy as np
     from pyroads.segmenter import segment_by_categories_and_slk_discontinuities
     
     

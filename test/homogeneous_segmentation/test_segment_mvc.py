@@ -1,9 +1,6 @@
 from io import StringIO
 import pandas as pd
-import numpy as np
 from pyroads.homogeneous_segmentation import segment_ids_to_minimize_coefficient_of_variation
-from pyroads.homogeneous_segmentation._seg_shs import cumulative_q
-import pytest
 
 def test_mvc_df1():
     df1 = pd.read_csv(StringIO(""""var_a","var_b","slk_from","slk_to"

@@ -36,7 +36,7 @@ def test_recombine_segmentation_index():
         ]
     )
 
-    result = segmentation.copy();
+    result = segmentation.copy()
     result["recombination_index"] = _recombine_segmentation_index(
         segmentation   = segmentation,
         original_data  = original_data,

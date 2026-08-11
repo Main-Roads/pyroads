@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 
 def test_segment_by_categories_and_slk_true_discontinuities():

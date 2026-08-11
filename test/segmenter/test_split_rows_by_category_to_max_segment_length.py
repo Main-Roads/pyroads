@@ -3,7 +3,6 @@
 
 def test_split_rows_by_category_to_max_segment_length():
     import pandas as pd
-    import numpy as np
     from pyroads.segmenter import split_rows_by_category_to_max_segment_length
     
     data_to_segment = pd.DataFrame(
@@ -137,7 +136,6 @@ def test_split_rows_by_category_to_max_segment_length():
 
 def test_test_split_rows_by_category_to_max_segment_length_troublesome():
     import pandas as pd
-    import numpy as np
     from pyroads.segmenter import split_rows_by_category_to_max_segment_length
     
     data_to_segment = pd.DataFrame(

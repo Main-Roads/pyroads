@@ -178,9 +178,6 @@ def test_split_rows_by_segmentation_preserves_indexes():
     # TODO: this test fails
 
     import pandas as pd
-    from pandas.testing import assert_frame_equal
-    import numpy as np
-    from pyroads.segmenter import split_rows_by_segmentation
     
     original_segmentation = pd.DataFrame(
         columns=["road_no", "carriageway", "xsp", "slk_from", "slk_to", "true_from", "true_to", "value"],

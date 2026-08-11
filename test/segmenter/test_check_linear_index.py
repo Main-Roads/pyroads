@@ -81,7 +81,6 @@ def test_check_linear_index():
 
 def test_check_linear_index_is_ordered_and_disjoint():
     import pandas as pd
-    import numpy as np
     from pyroads.segmenter._util.check_segmentation import check_linear_index, check_linear_index_is_ordered_and_disjoint
     
     # passing test

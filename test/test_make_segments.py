@@ -1,7 +1,6 @@
 
 def test_make_segments_slk_only():
 	import pandas as pd
-	import numpy as np
 	from pyroads.reshape import make_segments
 	
 	data_to_segment = pd.DataFrame(
