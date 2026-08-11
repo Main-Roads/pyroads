@@ -222,7 +222,7 @@ def cross_sections(
 
     result: Any = pd.DataFrame(
         output_rows,
-        columns=[
+        columns=pd.Index([
             CN.group_number,
             out_col_name_cross_section_number,
             *group_categories,
@@ -231,7 +231,7 @@ def cross_sections(
             *measure_slk,
             out_col_name_original_index,
             out_col_name_overlap,
-        ],
+        ]),
     )
     result.loc[:, out_col_name_cross_section_number] = (
         result.loc[:, out_col_name_cross_section_number]

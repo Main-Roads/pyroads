@@ -568,7 +568,7 @@ def on_slk_intervals_legacy(
     result = target.join(
         pd.DataFrame(
             result_rows,
-            columns=[x.rename for x in column_actions],
+            columns=pd.Index([x.rename for x in column_actions]),
             index=pd.Index(result_index),
         )
     )
@@ -956,8 +956,8 @@ def on_slk_intervals_optimized(
     merged = target.join(
         pd.DataFrame(
             result_buffer,
-            index=result_index,
-            columns=[action.rename for action in column_actions],
+            index=pd.Index(result_index),
+            columns=pd.Index([action.rename for action in column_actions]),
         )
     )
 
@@ -1365,8 +1365,8 @@ def on_slk_intervals_fallback(
     merged = target.join(
         pd.DataFrame(
             result_buffer,
-            index=result_index,
-            columns=[action.rename for action in column_actions],
+            index=pd.Index(result_index),
+            columns=pd.Index([action.rename for action in column_actions]),
         )
     )
 

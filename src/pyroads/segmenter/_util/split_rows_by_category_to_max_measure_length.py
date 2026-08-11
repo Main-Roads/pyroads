@@ -168,7 +168,7 @@ def split_rows_by_category_to_max_segment_length(
             arrays = sub_results_indexes,
             names  = [*categories, "segment_index"]
         ),
-        columns    = [*measure_slk, *measure_true],
+        columns    = pandas.Index([*measure_slk, *measure_true]),
     )
     # afterwards add two more columns (cant be built into the call above otherwise dtypes will be forced to match sub_results_slk_true)
     result["__sorted_index_from"], result["__sorted_index_to"  ] = np.concatenate(
