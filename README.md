@@ -145,8 +145,8 @@ wrote most of the functionality in the former `merge-segments`,
 `homogeneous-segmentation`, and `segmenter` packages.
 
 Dagmawi Tadesse consolidated these packages into the `pyroads` repository,
-preserving their public APIs for backward compatibility and delivering
-significant performance improvements through NumPy and Numba JIT compilation.
+preserving their public APIs for backward compatibility and delivering 
+performance improvements through NumPy and Numba JIT compilation.
 
 ## Disclaimer
 
