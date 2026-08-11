@@ -10,6 +10,12 @@ linear road-asset data. It consolidates the former `segmenter`,
 pip install pyroads
 ```
 
+To install the latest code from the GitHub `release` branch:
+
+```bash
+pip install git+https://github.com/Main-Roads/pyroads.git@release
+```
+
 For development from a checkout:
 
 ```bash
