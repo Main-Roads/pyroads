@@ -1,7 +1,7 @@
 """
 Implementation of the 'Minimum Coefficient of Variation' (MCV) homogeneous segmentation algorithm.
 """
-from typing import Optional
+from typing import Any
 import pandas as pd
 import numpy as np
 from ._optimal_bisections import optimal_bisections
@@ -9,10 +9,10 @@ from ._cumulative_p import cumulative_p
 
 
 def segment_ids_to_minimize_coefficient_of_variation(
-        data                         : pd.DataFrame,
+        data                         : Any,
         measure                      : tuple[str, str],
         variable_column_names        : list[str],
-        allowed_segment_length_range : Optional[tuple[float, float]] = None,
+        allowed_segment_length_range : Any = None,
     ) -> pd.Series:
     """
     Homogeneous segmentation function for continuous variables, aiming to 'Minimise Coefficient of Variation' (MCV)
@@ -87,7 +87,7 @@ def segment_ids_to_minimize_coefficient_of_variation(
         sa = [
             optimal_bisections(
                 variables                  = data_grouped_by_segment_id[x].loc[:,variable_column_names].values.transpose(),
-                length                     = data_grouped_by_segment_id[x][LENGTH_COLUMN_NAME].values,
+                length                     = np.asarray(data_grouped_by_segment_id[x][LENGTH_COLUMN_NAME].values, dtype=np.float64),
                 minimum_segment_length     = min_allowed_length,
                 cumulative_split_statistic = cumulative_p,
                 goal                       = "min",

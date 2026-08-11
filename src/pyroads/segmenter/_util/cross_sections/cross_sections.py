@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Hashable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -90,7 +91,7 @@ def _merge_cross_section_transitions(
 
 
 def cross_sections(
-    segmentation: pd.DataFrame,
+    segmentation: Any,
     group_categories: list[str],
     cross_section_categories: list[str],
     measure_slk: tuple[str, str],
@@ -150,7 +151,7 @@ def cross_sections(
             event_measure_slk = events[CN.event_measure_slk].to_numpy(dtype=np.float64)
             event_type = (events[CN.event_type].to_numpy() == "end").astype(np.int64)
             event_path_array = np.asarray(event_path, dtype=np.int64)
-            empty_outputs = [np.empty(0, dtype=np.float64) for _ in range(4)]
+            empty_outputs: list[Any] = [np.empty(0, dtype=np.float64) for _ in range(4)]
             empty_outputs.extend([np.empty(0, dtype=np.int64) for _ in range(2)])
             empty_outputs.append(np.empty(0, dtype=np.float64))
             empty_outputs.append(np.empty(0, dtype=np.int64))
@@ -162,7 +163,7 @@ def cross_sections(
                 event_source,
                 *empty_outputs,
             )
-            outputs = [np.empty(output_count, dtype=np.float64) for _ in range(4)]
+            outputs: list[Any] = [np.empty(output_count, dtype=np.float64) for _ in range(4)]
             outputs.extend([np.empty(output_count, dtype=np.int64) for _ in range(2)])
             outputs.append(np.empty(output_count, dtype=np.float64))
             outputs.append(np.empty(output_count, dtype=np.int64))
@@ -219,7 +220,7 @@ def cross_sections(
                         overlap,
                     ])
 
-    result = pd.DataFrame(
+    result: Any = pd.DataFrame(
         output_rows,
         columns=[
             CN.group_number,

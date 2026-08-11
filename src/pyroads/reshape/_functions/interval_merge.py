@@ -1,3 +1,5 @@
+from typing import Any
+
 from .get_segments import get_segments
 from .stretch import stretch
 from .as_metres import as_metres
@@ -5,36 +7,36 @@ import numpy as np
 
 
 def interval_merge(
-	left, 
-	right, 
-	id_vars=None, 
-	start=None, 
-	end=None, 
-	start_true=None, 
-	end_true=None, 
-	left_id_vars=None, 
-	right_id_vars=None, 
-	start_left=None, 
-	end_left=None,
-	start_right=None, 
-	end_right=None, 
-	start_true_left=None, 
-	end_true_left=None, 
-	start_true_right=None, 
-	end_true_right=None, 
-	split_at='left', 
-	summarise=True, 
-	use_ranges=True):
+	left: Any,
+	right: Any,
+	id_vars: Any = None,
+	start: Any = None,
+	end: Any = None,
+	start_true: Any = None,
+	end_true: Any = None,
+	left_id_vars: Any = None,
+	right_id_vars: Any = None,
+	start_left: Any = None,
+	end_left: Any = None,
+	start_right: Any = None,
+	end_right: Any = None,
+	start_true_left: Any = None,
+	end_true_left: Any = None,
+	start_true_right: Any = None,
+	end_true_right: Any = None,
+	split_at: Any = 'left',
+	summarise: Any = True,
+	use_ranges: Any = True):
 	
 	#Set all of the right and left variables depending on what parameters the user chose
 	if id_vars is not None:
-		if left_id_vars == None:
+		if left_id_vars is None:
 			left_id_vars = id_vars
 		else:
 			if isinstance(left_id_vars, str) and len(left_id_vars.split()) == 1:
 				left_id_vars = [left_id_vars]
 			left_id_vars = id_vars + left_id_vars
-		if right_id_vars == None:
+		if right_id_vars is None:
 			right_id_vars = id_vars
 		else:
 			if isinstance(right_id_vars, str) and len(right_id_vars.split()) == 1:
@@ -51,7 +53,7 @@ def interval_merge(
 
 	# Define the interval columns for the datasets
 	starts_left = [start for start in [start_left, start_true_left] if start is not None]
-	ends_left = [end for end in [end_left, end_true_left] if end != None]
+	ends_left = [end for end in [end_left, end_true_left] if end is not None]
 	starts_right = [start for start in [start_right, start_true_right] if start is not None]
 	ends_right = [end for end in [end_right, end_true_right] if end is not None]
 	slk_interval_cols = starts_left + starts_right + ends_left + ends_right
@@ -83,7 +85,7 @@ def interval_merge(
 	## List of columns that will be grouped on
 	if isinstance(split_at, list):
 		split_at = split_at
-	elif split_at == True:
+	elif split_at is True:
 		split_at = [col for col in [col for col in left_copy.columns]  + [col for col in right_copy.columns] if col not in slk_interval_cols + id_vars + summarise_cols] + [var for var in left_id_vars + right_id_vars if var not in id_vars]
 	elif split_at == 'left':
 		split_at = [col for col in left_copy.columns if col not in starts_left + ends_left + left_id_vars + summarise_cols] + [var for var in left_id_vars if var not in id_vars]
@@ -107,6 +109,7 @@ def interval_merge(
 
 	## Find the GCD
 	### Create a list of all the lengths	
+	lengths: tuple[Any, ...] = ()
 	# left
 	for start, end in zip(starts_left, ends_left):
 		lengths = tuple(left_metres[end] - left_metres[start])
@@ -118,7 +121,7 @@ def interval_merge(
 	
 	# rename SLKs congruently
 	#Dictionary with which to rename the SLK columns
-	slk_dict = {
+	slk_dict: dict[Any, Any] = {
 		start_right: 'START_SLK' if bool(start_right) else None, 
 		start_true_right: 'START_TRUE' if bool(start_true_right) else None, 
 		end_right: 'END_SLK' if bool(end_right) else None, 
@@ -129,7 +132,7 @@ def interval_merge(
 		end_true_left: 'END_TRUE' if bool(end_true_left) else None}
 	##Don't include the missing parameters
 	for key in list(slk_dict.keys()):
-		if key == None:
+		if key is None:
 			slk_dict[key] = None
 	##rename
 	left_copy = left_copy.rename(columns=slk_dict)

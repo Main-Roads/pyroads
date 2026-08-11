@@ -2,7 +2,7 @@
 Implementation of the Spatial Heterogeneity-based Segmentation (SHS).
 """
 
-from typing import Optional
+from typing import Any
 import pandas as pd
 import numpy as np
 from ._optimal_bisections import optimal_bisections
@@ -10,10 +10,10 @@ from ._cumulative_q import cumulative_q
 
 
 def segment_ids_to_maximize_spatial_heterogeneity(
-        data:pd.DataFrame,
+        data:Any,
         measure:tuple[str, str],
         variable_column_names:list[str],
-        allowed_segment_length_range:Optional[tuple[float, float]] = None,
+        allowed_segment_length_range:Any = None,
     )->pd.Series:
     """
     Homogeneous segmentation function for continuous variables sing the Spatial Heterogeneity Segmentation (SHS) method.
@@ -104,7 +104,7 @@ def segment_ids_to_maximize_spatial_heterogeneity(
         sa = [
             optimal_bisections(
                 variables                  = data_grouped_by_segment_id[x].loc[:,variable_column_names].values.transpose(),
-                length                     = data_grouped_by_segment_id[x][LENGTH_COLUMN_NAME].values,
+                length                     = np.asarray(data_grouped_by_segment_id[x][LENGTH_COLUMN_NAME].values, dtype=np.float64),
                 minimum_segment_length     = min_allowed_length,
                 cumulative_split_statistic = cumulative_q,
                 goal                       = "max",

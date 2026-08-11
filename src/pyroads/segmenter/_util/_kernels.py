@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import numpy.typing as npt
 
 try:
     from numba import njit
 except ImportError:  # pragma: no cover - exercised when performance extras are absent
-    njit = None
+    njit: Any = None
 
 
 if njit is not None:
@@ -285,12 +287,12 @@ def overlay_events(
     event_type: npt.NDArray[np.int64],
     event_df_num: npt.NDArray[np.int64],
     event_original_index: npt.NDArray[np.int64],
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+) -> Any:
     """Run one sorted segmentation-overlay event sweep."""
     if _overlay_events_numba is not None:
         result = _overlay_events_numba(event_measure_true, event_measure_slk, event_type, event_df_num, event_original_index)
         count = result[-1]
-        return tuple(values[:count] for values in result[:-1])
+        return tuple(values[:count] for values in result[:-1])  # pyright: ignore[reportReturnType]
 
     output = [[] for _ in range(6)]
     original_index = -1

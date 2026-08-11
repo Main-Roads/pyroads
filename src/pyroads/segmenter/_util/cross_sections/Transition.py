@@ -49,7 +49,7 @@ class Transition:
     
     def __repr__(self) -> str:
         return (
-              f"Transition("
+              "Transition("
             + f"true: {self.measure_true_from:.3f} {self.measure_true_to:.3f} "
             + f"slk: {self.measure_slk_from:.3f} {self.measure_slk_to:.3f} "
             + f"tree: {self.tree} )"

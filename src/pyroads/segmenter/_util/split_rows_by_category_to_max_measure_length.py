@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Any, List, Tuple
 import pandas
 import numpy as np
 from .by_category import segment_by_categories_and_slk_true_discontinuities
@@ -6,7 +6,7 @@ from ._kernels import longest_overlap_positions
 from .linspace_steps import linspace_steps
 
 def split_rows_by_category_to_max_segment_length(
-    data:pandas.DataFrame,
+    data:Any,
     measure_slk:Tuple[str,str],
     measure_true:Tuple[str,str],
     categories:List[str],
@@ -80,11 +80,6 @@ def split_rows_by_category_to_max_segment_length(
     sub_results_indexes = [[] for _ in range(len(categories)+1)]
 
     # stretch index;
-    MOD_result_index = new_index_summary.index.repeat(
-        new_index_summary.loc[:,("__sorted_order","max")] - new_index_summary.loc[:,("__sorted_order","min")]
-    )
-
-
     # The following logic is similar to a pandas.DataFrame.reindex() call with an Index.repeat()
     for (
             index,
@@ -200,7 +195,7 @@ def split_rows_by_category_to_max_segment_length(
     # get a list of column names that are not part of the index we built
     value_columns = list(set(data.columns) - {*categories, *measure_slk, *measure_true})
 
-    result = (
+    result: Any = (
         result
         .join(
             data[value_columns],

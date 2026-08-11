@@ -80,7 +80,7 @@ def _configure_default_performance_logger_from_env() -> None:
 
 
 try:
-    from tqdm import tqdm as _real_tqdm
+    from tqdm import tqdm as _real_tqdm  # pyright: ignore[reportMissingModuleSource]
 except ImportError:  # pragma: no cover - optional dependency
     _tqdm_callable: Optional[Callable[..., Iterable[Any]]] = None
 else:
@@ -435,7 +435,7 @@ def on_slk_intervals_legacy(
             # create a blank row to store the result of each column
             aggregated_result_row: list[Any] = []
             for column_action_index, column_action in enumerate(column_actions):
-                column_len_to_aggregate: pd.DataFrame = data_to_aggregate_for_target_group.loc[
+                column_len_to_aggregate: Any = data_to_aggregate_for_target_group.loc[
                     :, [column_action.column_name]
                 ].assign(
                     overlap_len=overlap_len
@@ -503,11 +503,8 @@ def on_slk_intervals_legacy(
                         :, 1
                     ]  # TODO: Why is this repeated?
 
-                    x_coords = (
-                        (column_to_aggregate_overlap_len.rolling(2).mean())
-                        .fillna(0)
-                        .cumsum()
-                    )
+                    rolling_mean: Any = column_to_aggregate_overlap_len.rolling(2).mean()
+                    x_coords: Any = rolling_mean.fillna(0).cumsum()
                     total = float(x_coords.iloc[-1])
                     if total <= 0:
                         aggregated_result_row.append(column_to_aggregate.iloc[-1])
@@ -1123,7 +1120,7 @@ def on_slk_intervals_fallback(
     column_actions: List[Action],
     from_to: Tuple[str, str],
     *,
-    data_subset: Optional[pd.DataFrame] = None,
+    data_subset: Any = None,
     data_groups: Optional[Dict[tuple, pd.DataFrame]] = None,
     skip_validation: bool = False,
     perf_origin: str = "legacy",

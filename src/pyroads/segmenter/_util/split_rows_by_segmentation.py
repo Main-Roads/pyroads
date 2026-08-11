@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Any, List, Tuple
 import pandas
 import numpy as np
 
@@ -19,8 +19,8 @@ class CN:
     event_type         = "event_type"
 
 def split_rows_by_segmentation(
-        original_segmentation:pandas.DataFrame,
-        additional_segmentation:pandas.DataFrame,
+        original_segmentation:Any,
+        additional_segmentation:Any,
         categories:List[str],
         measure_slk:Tuple[str,str],
         measure_true:Tuple[str,str],
@@ -57,22 +57,22 @@ def split_rows_by_segmentation(
     
     # force the user to drop any multi-index
     if isinstance(original_segmentation.index, pandas.MultiIndex):
-        raise ValueError(f"`original_segmentation` has a MultiIndex which is not supported. Please use `original_segmentation.reset_index()`")
+        raise ValueError("`original_segmentation` has a MultiIndex which is not supported. Please use `original_segmentation.reset_index()`")
     if isinstance(additional_segmentation.index, pandas.MultiIndex):
-        raise ValueError(f"`additional_segmentation` has a MultiIndex which is not supported. Please use `additional_segmentation.reset_index()`")
+        raise ValueError("`additional_segmentation` has a MultiIndex which is not supported. Please use `additional_segmentation.reset_index()`")
 
     # confirm indexes do not have duplicates
     if original_segmentation.index.has_duplicates:
-        raise ValueError(f"`original_segmentation` has duplicates in its index. Please use `original_segmentation.reset_index()`")
+        raise ValueError("`original_segmentation` has duplicates in its index. Please use `original_segmentation.reset_index()`")
     if additional_segmentation.index.has_duplicates:
-        raise ValueError(f"`additional_segmentation` has duplicates in its index. Please use `additional_segmentation.reset_index()`")
+        raise ValueError("`additional_segmentation` has duplicates in its index. Please use `additional_segmentation.reset_index()`")
 
     # since we do not preserve the original indexes due to the problems explained below
     # for now, we will force the user to use a range-index
     if not (original_segmentation.index == pandas.RangeIndex(len(original_segmentation.index))).all():
-        raise ValueError(f"`original_segmentation` index is not a RangeIndex (0,1,2,3,...). This will cause problems downstream due to the index not being preserved. This will be fixed in the future. Please use `original_segmentation.reset_index()`")
+        raise ValueError("`original_segmentation` index is not a RangeIndex (0,1,2,3,...). This will cause problems downstream due to the index not being preserved. This will be fixed in the future. Please use `original_segmentation.reset_index()`")
     if not (additional_segmentation.index == pandas.RangeIndex(len(additional_segmentation.index))).all():
-        raise ValueError(f"`additional_segmentation` index is not a RangeIndex (0,1,2,3,...). This will cause problems downstream due to the index not being preserved. This will be fixed in the future. Please use `additional_segmentation.reset_index()`")
+        raise ValueError("`additional_segmentation` index is not a RangeIndex (0,1,2,3,...). This will cause problems downstream due to the index not being preserved. This will be fixed in the future. Please use `additional_segmentation.reset_index()`")
 
     # check that all columns required by the parameters are present
     _check_columns_present("categories",   original_segmentation, categories,   "original_segmentation")
@@ -148,7 +148,7 @@ def split_rows_by_segmentation(
             group[CN.original_df_num].to_numpy(dtype=np.int64),
             group[CN.original_index].to_numpy(dtype=np.int64),
         )
-        group_index_columns = [group_index] if isinstance(group_index, str) else group_index
+        group_index_columns: Any = [group_index] if isinstance(group_index, str) else group_index
         result_length = len(sweep[0])
         for category, value in zip(categories, group_index_columns):
             result_columns[category].extend([value] * result_length)
@@ -160,7 +160,7 @@ def split_rows_by_segmentation(
         result_columns[name_additional_index].extend(np.where(sweep[5] >= 0, sweep[5], np.nan))
     # TODO: sometimes `name_original_index` and `name_additional_index` are floating point and sometimes int depending if all rows have a value.
     
-    result = pandas.DataFrame(result_columns)
+    result: Any = pandas.DataFrame(result_columns)
     result[name_original_index] = result[name_original_index].astype("f8")
     result[name_additional_index] = result[name_additional_index].astype("f8")
     return result

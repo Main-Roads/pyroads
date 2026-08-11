@@ -1,6 +1,5 @@
 from __future__ import annotations
-from typing import Callable, Collection, Generator, Iterable, Iterator, List, Optional, Hashable, Any, Sequence, Tuple
-import pandas as pd
+from typing import Callable, Iterator, List, Hashable, Tuple
 import itertools
 
 

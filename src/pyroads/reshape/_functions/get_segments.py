@@ -1,12 +1,11 @@
-from typing import Optional, Union
+from typing import Any, Optional, Union
 import numpy as np
-import pandas as pd
 
 from .stretch import stretch
 from .as_metres import as_metres
 
 def get_segments(
-	data: pd.DataFrame, 
+	data: Any, 
 	id_vars: Union[str, list],
 	SLK: Optional[str] = None, 
 	true_SLK: Optional[str] = None, 
@@ -17,7 +16,7 @@ def get_segments(
 	split_at: Union[str, list, bool] = False, 
 	summarise: Union[dict, bool] = True, 
 	segment_size: Optional[int] = None,
-	) -> 'pd.DataFrame':
+	) -> Any:
 
 	"""
 	Aggregates observations into segments grouped by categorical variables.
@@ -91,7 +90,7 @@ def get_segments(
 	#If using point parameters, make sure they are in metres
 	if bool(SLK or true_SLK):
 		if not isinstance(segment_size, int):
-			return "`segment_size` must be provided when using pre-stretched data"
+			raise ValueError("`segment_size` must be provided when using pre-stretched data")
 		else:
 			if true_SLK is not None:
 				if not (new_data[true_SLK].dtype != int or new_data[true_SLK].dtype != np.int64): 
@@ -104,7 +103,7 @@ def get_segments(
 		starts = [col for col in [start, start_true] if col in new_data.columns]
 		ends = [col for col in [end, end_true] if col in new_data.columns]
 		lengths = as_metres(new_data[ends[0]]) - as_metres(new_data[starts[0]])
-		segment_size = np.gcd.reduce(lengths)
+		segment_size = int(np.gcd.reduce(lengths))
 		new_data = stretch(data, start=start, end=end, start_true=start_true, end_true=end_true, segment_size = segment_size, as_km=False)
 		if bool(start):
 			SLK = 'SLK'
@@ -126,7 +125,7 @@ def get_segments(
 	# split_at - the variables for which to ensure are not broken between segments
 	if bool(split_at):
 		# If split_at is True, group by all columns other than the `id_vars` (ID variables)
-		if split_at == True:
+		if split_at is True:
 			split_at = [col for col in new_data.columns if col not in id_vars + SLKs]
 			if isinstance(summarise, dict):
 				split_at = [col for col in new_data.columns if col not in id_vars + SLKs + list(summarise.keys())]
@@ -186,7 +185,7 @@ def get_segments(
 			agg_dict.update(summarise)
 	new_data = new_data.groupby(['segment_id'] + id_vars + split_at).agg(agg_dict)
 	new_data.columns = ["_".join(x) for x in new_data.columns]
-	new_data = new_data.rename(columns={'SLK_min': 'START_SLK', 'SLK_max': 'END_SLK', 'true_SLK_min': 'START_TRUE', 'true_SLK_max': 'END_TRUE'})
+	new_data = new_data.rename(columns={'SLK_min': 'START_SLK', 'SLK_max': 'END_SLK', 'true_SLK_min': 'START_TRUE', 'true_SLK_max': 'END_TRUE'})  # pyright: ignore[reportCallIssue]
 	
 	start_cols = [col for col in ['START_SLK', 'START_TRUE'] if col in new_data.columns]
 	end_cols = [col for col in ['END_SLK', 'END_TRUE'] if col in new_data.columns]

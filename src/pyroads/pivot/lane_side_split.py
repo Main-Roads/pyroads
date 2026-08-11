@@ -1,10 +1,9 @@
 
 from xmlrpc.client import Boolean
-import numpy as np
-import pandas as pd
+from typing import Any
 
 def lane_side_split(
-	data: pd.DataFrame,
+	data: Any,
 	xsp: str,
 	all_lanes: Boolean = False,
 ):

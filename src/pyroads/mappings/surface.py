@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -21,7 +21,7 @@ id_to_name = {
 name_to_id =  dict((name, id) for id,name in id_to_name.items())
 
 
-def surf_type(data: pd.DataFrame, source: str = "surface_type", to: Literal["full", "short", "asphalt", "grouped", "group_id"] = "short", **kwargs) -> pd.Series:
+def surf_type(data: Any, source: str = "surface_type", to: Literal["full", "short", "asphalt", "grouped", "group_id"] = "short", **kwargs) -> pd.Series:
 	source = kwargs.pop("from", source)
 	surf_id = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 	full = ["Asphalt Dense Graded", "Asphalt Intersection Mix", "Asphalt Open Graded", "Concrete", "Paving", "Primer Seal", "Rubberised Seal", "Single Seal", "Slurry Seal", "Two Coat Seal", "Asphalt Stone Mastic", "Asphalt Open Graded on Dense Graded", "Asphalt Gap Graded Rubberised (GGAR)"]
@@ -46,7 +46,7 @@ def surf_type(data: pd.DataFrame, source: str = "surface_type", to: Literal["ful
 	return data[source].map(surf_dict)
 
 
-def surf_id(data: pd.DataFrame, source: str = "surface_type", to="short", **kwargs) -> pd.Series:
+def surf_id(data: Any, source: str = "surface_type", to="short", **kwargs) -> pd.Series:
 	source = kwargs.pop("from", source)
 	"""
 	convert surface type id to text

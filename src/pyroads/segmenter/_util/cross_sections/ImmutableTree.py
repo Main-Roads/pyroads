@@ -139,7 +139,6 @@ class ImmutableTree:
         rows = []
         for data in self.get_row_data():
             rows.append([*data[0], *data[1]])
-        columns = [f"L{i}" for i in range(self.get_depth())]
         return pd.DataFrame(
             data=rows
         )

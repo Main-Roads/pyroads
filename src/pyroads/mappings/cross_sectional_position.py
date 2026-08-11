@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pandas as pd
 
@@ -22,7 +23,7 @@ def hsd_to_side(data, hsd):
 
 
 def lane_to_row(
-    data: pd.DataFrame,
+    data: Any,
     dirn: str,
     id_vars: list[str],
     start: str | None = None,
@@ -31,7 +32,7 @@ def lane_to_row(
     end_true: str | None = None,
     prefixes: list[str] | str | None = None,
     **kwargs,
-) -> pd.DataFrame:
+) -> Any:
     """Compatibility wrapper for the historical cross-sectional pivot API."""
     if prefixes is None:
         return _lane_to_row(

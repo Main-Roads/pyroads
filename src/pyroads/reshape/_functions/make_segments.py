@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -6,7 +6,7 @@ import pandas as pd
 from .as_metres import as_metres
 
 def make_segments(
-	data: pd.DataFrame, 
+	data: Any,
 	start: Optional[str] = None, 
 	end: Optional[str] = None, 
 	start_true: Optional[str] = None, 
@@ -97,9 +97,9 @@ def make_segments(
 	if split_ends:
 		for start_, end_ in zip(starts, ends):
 			# where the difference between the `end` and `start` is less than the minimum segment size and isn't a start_end, subtract the difference from the `start` and set the same value as the previous `end`
-			new_data['too_short'] = np.where(((new_data[end_] - new_data[start_]) < max_segment) & (new_data['start_end'] == False), True, False)		
-			new_data[end_] = np.where(new_data['too_short'].shift(-1) == True, (new_data[end_].shift(-1) + new_data[start_]) / 2, new_data[end_])
-			new_data[start_] = np.where(new_data['too_short'] == True, new_data[end_].shift(1), new_data[start_])	
+			new_data['too_short'] = np.where(((new_data[end_] - new_data[start_]) < max_segment) & ~new_data['start_end'], True, False)		
+			new_data[end_] = np.where(new_data['too_short'].shift(-1).fillna(False), (new_data[end_].shift(-1) + new_data[start_]) / 2, new_data[end_])
+			new_data[start_] = np.where(new_data['too_short'], new_data[end_].shift(1), new_data[start_])	
 			#Find the 2 decimal place ceiling and floor for start and end values respectively.
 			new_data[start_] = np.round(new_data[start_]/10) * 10
 			new_data[end_] = np.round(new_data[end_]/10) * 10

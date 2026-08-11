@@ -1,7 +1,7 @@
 
 
 
-from typing import List, Tuple
+from typing import Any, List, Tuple
 import pandas
 import numpy as np
 CATEGORY_COLUMN_NAME = "seg.ctg"
@@ -9,7 +9,7 @@ CATEGORY_COLUMN_NAME = "seg.ctg"
 
 
 def segment_by_categories_and_slk_discontinuities(
-        data:pandas.DataFrame,
+        data:Any,
         categories:List[str],
         measure_slk:Tuple[str,str],
     ):
@@ -66,7 +66,7 @@ def segment_by_categories_and_slk_discontinuities(
     return pandas.Series(segment_ids.astype("u8"), index=data.index)
 
 def segment_by_categories_and_slk_true_discontinuities(
-        data:pandas.DataFrame,
+        data:Any,
         categories:List[str],
         measure_slk:Tuple[str,str],
         measure_true:Tuple[str,str]
@@ -150,4 +150,4 @@ def segment_by_cross_section(
     Returns a series containing integer segment labels:
     A new 'segment' is started whenever one of the `categories` changes or
     """
-    data[segmentation_id]
+    raise NotImplementedError("Cross-section segmentation is not implemented yet")

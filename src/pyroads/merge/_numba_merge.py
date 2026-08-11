@@ -674,7 +674,7 @@ def _get_agg_type_code(aggregation) -> Tuple[int, float]:
     return agg_type, percentile
 
 
-def _is_numeric_column(series: pd.Series) -> bool:
+def _is_numeric_column(series: Any) -> bool:
     """Check if series contains numeric data."""
     return pd.api.types.is_numeric_dtype(series)
 
@@ -769,7 +769,7 @@ def on_slk_intervals_numba(
     data_groups: Dict[tuple, pd.DataFrame] = {}
     for key, group in data_subset.groupby(join_left, sort=False):
         key_tuple = key if isinstance(key, tuple) else (key,)
-        data_groups[key_tuple] = group.reset_index(drop=True)
+        data_groups[key_tuple] = group.reset_index(drop=True)  # pyright: ignore[reportArgumentType]
 
     # Group target
     target_groups = target.groupby(join_left, sort=False)

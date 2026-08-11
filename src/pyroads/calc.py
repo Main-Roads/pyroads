@@ -33,19 +33,19 @@ def deteriorate(initial, rate, final=False, n_periods=False, n_intervals=1, perc
 	
 	interval_rate = (1 + rate / factor) ** (1 / n_intervals) - 1
 	
-	l = [initial]
+	curve = [initial]
 	
 	if n_periods and final:
-		while l[-1] >= final and len(l) <= (n_intervals * n_periods):
-			val = l[-1] * (1 - interval_rate)
-			l.append(val)
+		while curve[-1] >= final and len(curve) <= (n_intervals * n_periods):
+			val = curve[-1] * (1 - interval_rate)
+			curve.append(val)
 	if n_periods and not final:
-		while len(l) <= (n_intervals * n_periods):
-			val = l[-1] * (1 - interval_rate)
-			l.append(val)
+		while len(curve) <= (n_intervals * n_periods):
+			val = curve[-1] * (1 - interval_rate)
+			curve.append(val)
 	if final and not n_periods:
-		while l[-1] >= final:
-			val = l[-1] * (1 - interval_rate)
-			l.append(val)
+		while curve[-1] >= final:
+			val = curve[-1] * (1 - interval_rate)
+			curve.append(val)
 	
-	return l
+	return curve

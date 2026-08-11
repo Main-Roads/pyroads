@@ -1,15 +1,15 @@
-from typing import Optional, Union
-import pandas as pd
+from typing import Any, Optional, Union
 import numpy as np
 
-from pyroads.pivot.lane_side_split import lane_side_split
+from .lane_side_split import lane_side_split as split_lanes_by_side
+
 
 
 def lane_to_col(
-	data: pd.DataFrame,
+	data: Any,
 	xsp: str,
 	side_split: bool = False,
-	id_vars: list[str] = None,
+	id_vars: Optional[list[str]] = None,
 	values: Optional[Union[str, list[str]]] = None,
 	turn_pockets: bool = False,
 	all_lanes: bool = False,
@@ -30,6 +30,8 @@ def lane_to_col(
 	
 	if isinstance(values, str):
 		values = [values]
+	if values is None:
+		values = []
 	
 	if id_vars is None:
 		id_vars = [col for col in new_data.columns if col not in values + ['LANE_NO', xsp]]
@@ -37,7 +39,7 @@ def lane_to_col(
 	
 	
 	if side_split:
-		new_data = side_split(new_data, xsp = xsp)
+		new_data = split_lanes_by_side(new_data, xsp = xsp)
 	#pivot
 		new_data = new_data.fillna(-1).pivot_table(index = id_vars, columns = 'LANE_NO', values = values, aggfunc = 'first').reset_index()
 	else:

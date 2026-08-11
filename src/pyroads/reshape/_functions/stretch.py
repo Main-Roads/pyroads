@@ -50,7 +50,7 @@ def stretch(
 	names = [v for k, v in zip([start, start_true], ['SLK', 'true_SLK']) if k is not None]
 	SLKs = starts + ends
 	
-	if type(sort) == list:
+	if isinstance(sort, list):
 		new_data = new_data.sort_values(sort)
 	
 	# Change SLK variables to 32 bit integers of metres to avoid the issue with calculations on floating numbers
