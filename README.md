@@ -7,14 +7,13 @@ linear road-asset data. It consolidates the former `segmenter`,
 ## Installation
 
 ```bash
-pip install pyroads
-```
-
-To install the latest code from the GitHub `release` branch:
-
-```bash
 pip install git+https://github.com/Main-Roads/pyroads.git@release
 ```
+
+Installing directly from GitHub builds the Rust extension locally, so the
+machine must have a Rust toolchain with `cargo` and `rustc` available. The build
+frontend installs Maturin automatically. If the Rust extension cannot be
+imported at runtime, pyroads uses its Numba/Python fallback implementations.
 
 For development from a checkout:
 
@@ -136,6 +135,189 @@ functionality. Run them with:
 
 ```bash
 uv run pytest
+```
+
+## Developer guide
+
+### Development prerequisites
+
+Development requires:
+
+- Python 3.10 or newer
+- [uv](https://docs.astral.sh/uv/)
+- A stable Rust toolchain providing `cargo` and `rustc`
+- A C build environment supported by PyO3 on the target operating system
+
+Install Rust with [rustup](https://rustup.rs/) when it is not already managed
+by the development machine. Check the tools before building:
+
+```bash
+python --version
+uv --version
+rustc --version
+cargo --version
+```
+
+### Create the development environment
+
+From the repository root, synchronize the locked Python environment and install
+the development dependencies:
+
+```bash
+uv sync --dev
+```
+
+The root `pyproject.toml` uses Maturin as its build backend. The Rust manifest
+is `rust/_native/Cargo.toml`, and the compiled extension is packaged as
+`pyroads._native`.
+
+### Run tests and quality checks
+
+Run the complete Python test suite:
+
+```bash
+uv run pytest
+```
+
+Run a focused test file or test function while iterating:
+
+```bash
+uv run pytest test/test_interval_merge.py
+uv run pytest test/test_interval_merge.py::test_interval_merge
+```
+
+Run the configured static checks:
+
+```bash
+uv run ruff check src
+uv run pyright src
+```
+
+The Rust crate can be checked independently:
+
+```bash
+cargo fmt --manifest-path rust/_native/Cargo.toml -- --check
+cargo check --manifest-path rust/_native/Cargo.toml
+```
+
+### Build and inspect distribution artifacts
+
+Build the wheel and source distribution into a temporary directory:
+
+```bash
+rm -rf /tmp/pyroads-dist
+uv build --out-dir /tmp/pyroads-dist
+```
+
+The wheel should contain a platform-specific file named like
+`pyroads/_native.cpython-311-x86_64-linux-gnu.so` (the suffix varies by
+operating system and Python version). The source distribution should contain
+`rust/_native/Cargo.toml` and `rust/_native/src/lib.rs`.
+
+Inspect the artifacts from the command line:
+
+```bash
+find /tmp/pyroads-dist -maxdepth 1 -type f -printf '%f\n'
+unzip -Z1 /tmp/pyroads-dist/pyroads-*.whl | grep -E 'pyroads/_native|\.so$|\.pyd$'
+tar -tzf /tmp/pyroads-dist/pyroads-*.tar.gz | grep 'rust/_native/'
+```
+
+Test a built wheel in an isolated environment before distributing it:
+
+```bash
+rm -rf /tmp/pyroads-wheel-venv
+uv venv /tmp/pyroads-wheel-venv
+uv pip install --python /tmp/pyroads-wheel-venv/bin/python /tmp/pyroads-dist/pyroads-*.whl
+/tmp/pyroads-wheel-venv/bin/python -c \
+	"import numpy as np; from pyroads import _native; print(_native.cumulative_p(np.array([1., 2., 3.])))"
+```
+
+On Windows, replace the virtual environment Python path with
+`/tmp/pyroads-wheel-venv/Scripts/python.exe` or the equivalent local path.
+
+### Native backend behavior
+
+The Python modules import `pyroads._native` when available. If the extension
+cannot be imported, the existing Numba/Python implementations remain usable
+and print a fallback notice. No environment variable is needed to select the
+backend.
+
+For local Rust work, build the extension in release mode through the root
+package configuration:
+
+```bash
+uv build --out-dir /tmp/pyroads-dist
+```
+
+For a quick Rust-only compile check, use Cargo instead of producing a wheel:
+
+```bash
+cargo check --manifest-path rust/_native/Cargo.toml
+```
+
+Do not commit locally generated `.so`, `.pyd`, `target/`, virtual-environment,
+or cache files. They are ignored by the repository. Native binaries are
+platform- and Python-version-specific; distributable wheels must be built for
+each supported platform and interpreter combination.
+
+### Command-line interface and benchmarks
+
+The package currently has no dedicated `pyroads` console command. The
+supported command-line developer tools are the repository scripts and standard
+Python tooling.
+
+Run the segmenter benchmark:
+
+```bash
+uv run python examples/segmenter/benchmark.py --repeats 7
+```
+
+It prints JSON timing and output-row data for category segmentation, overlay,
+cross-sections, and maximum-length splitting.
+
+Run the merge benchmark with synthetic data:
+
+```bash
+uv run python examples/merge/compare_merges.py \
+	--targets 5000 \
+	--data 15000 \
+	--groups 5 \
+	--repeats 5
+```
+
+The merge benchmark can also compare CSV inputs:
+
+```bash
+uv run python examples/merge/compare_merges.py \
+	--target-file target.csv \
+	--data-file data.csv \
+	--repeats 5
+```
+
+For notebooks, start Jupyter through the locked environment:
+
+```bash
+uv run --with jupyterlab jupyter lab
+```
+
+### Pull requests and CI
+
+The workflow at `.github/workflows/ci.yml` runs Python tests and static checks,
+builds platform wheels containing the Rust extension, and builds a source
+distribution. Changes to Python dispatch code should be checked in both a
+machine with the native extension available and a fallback environment where
+`pyroads._native` cannot be imported.
+
+Before opening a pull request, run:
+
+```bash
+uv sync --dev
+uv run pytest
+uv run ruff check src
+uv run pyright src
+cargo fmt --manifest-path rust/_native/Cargo.toml -- --check
+cargo check --manifest-path rust/_native/Cargo.toml
+uv build --out-dir /tmp/pyroads-dist
 ```
 
 ## Acknowledgements
