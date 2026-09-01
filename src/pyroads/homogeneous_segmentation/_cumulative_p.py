@@ -5,9 +5,19 @@ which supports the Minimise Coefficient of Variation (MCV) method.
 import numpy as np
 import numpy.typing as npt
 
+from pyroads._backend import announce_fallback
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
+
 def cumulative_p(data:npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     """ Computes the cumulative P-statistic for each potential split index in an array.
     """
+    if _rust_native is not None:
+        return _rust_native.cumulative_p(np.ascontiguousarray(data, dtype=np.float64))
+    announce_fallback()
     cum_n                = np.arange(1, len(data))  # 1:(n - 1)         # Used as denominator later ∴ Must start from 1.
     cum_n_rev            = cum_n[:  :-1]
     data_left            = data [:-1   ]            # drops last

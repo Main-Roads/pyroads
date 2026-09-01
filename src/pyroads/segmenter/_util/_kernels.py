@@ -5,6 +5,13 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from pyroads._backend import announce_fallback
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
+
 try:
     from numba import njit
 except ImportError:  # pragma: no cover - exercised when performance extras are absent
@@ -54,6 +61,14 @@ def longest_overlap_positions(
     source_to: npt.NDArray[np.float64],
 ) -> npt.NDArray[np.int64]:
     """Select the first source interval with the greatest positive overlap."""
+    if _rust_native is not None:
+        return _rust_native.longest_overlap_positions(
+            np.ascontiguousarray(output_from, dtype=np.float64),
+            np.ascontiguousarray(output_to, dtype=np.float64),
+            np.ascontiguousarray(source_from, dtype=np.float64),
+            np.ascontiguousarray(source_to, dtype=np.float64),
+        )
+    announce_fallback()
     if _longest_overlap_positions_numba is not None:
         return _longest_overlap_positions_numba(output_from, output_to, source_from, source_to)
 
@@ -71,6 +86,18 @@ def longest_overlap_positions(
                 positions[output_index] = candidate
             candidate += 1
     return positions
+
+
+def longest_overlap_positions_batch(groups: list[tuple[npt.NDArray[np.float64], ...]]) -> list[npt.NDArray[np.int64]]:
+    """Select longest overlaps for independent groups in one native call."""
+    if _rust_native is not None:
+        native_groups = [
+            tuple(np.ascontiguousarray(array, dtype=np.float64) for array in group)
+            for group in groups
+        ]
+        return _rust_native.longest_overlap_positions_parallel(native_groups)
+    announce_fallback()
+    return [longest_overlap_positions(*group) for group in groups]
 
 
 if njit is not None:
@@ -289,6 +316,15 @@ def overlay_events(
     event_original_index: npt.NDArray[np.int64],
 ) -> Any:
     """Run one sorted segmentation-overlay event sweep."""
+    if _rust_native is not None:
+        arrays = (
+            np.ascontiguousarray(event_measure_true, dtype=np.float64),
+            np.ascontiguousarray(event_measure_slk, dtype=np.float64),
+            np.ascontiguousarray(event_type, dtype=np.int64),
+            np.ascontiguousarray(event_df_num, dtype=np.int64),
+            np.ascontiguousarray(event_original_index, dtype=np.int64),
+        )
+        return _rust_native.overlay_events(*arrays)
     if _overlay_events_numba is not None:
         result = _overlay_events_numba(event_measure_true, event_measure_slk, event_type, event_df_num, event_original_index)
         count = result[-1]
@@ -296,6 +332,7 @@ def overlay_events(
 
     output = [[] for _ in range(6)]
     original_index = -1
+    announce_fallback()
     additional_index = -1
     last_true = None
     last_slk = None

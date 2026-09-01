@@ -3,6 +3,15 @@ import numpy as np
 import numpy.typing as npt
 from typing import Callable, Literal
 
+from pyroads._backend import announce_fallback
+from ._cumulative_p import cumulative_p
+from ._cumulative_q import cumulative_q
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
+
 _goal_functions = {
     "min": np.min,
     "max": np.max
@@ -71,6 +80,23 @@ def optimal_bisections (
         # print("did not split into 3... try 1 or 2?")
         assert len(np.split(k_mask,np.flatnonzero(k_mask[:-1] != k_mask[1:])+1)) in {1,2}
 
+    if (
+        np.any(k_mask)
+        and _rust_native is not None
+        and cumulative_split_statistic in {cumulative_p, cumulative_q}
+    ):
+        return np.asarray(
+            _rust_native.optimal_bisections_pq(
+                np.ascontiguousarray(np.asarray(variables, dtype=np.float64)),
+                np.ascontiguousarray(k_mask, dtype=np.uint8),
+                0 if cumulative_split_statistic is cumulative_p else 1,
+                0 if goal == "min" else 1,
+            ),
+            dtype=np.int64,
+        )
+
+    if _rust_native is None:
+        announce_fallback()
 
     objective_columns = []
     for variable in variables:

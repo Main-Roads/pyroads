@@ -2,8 +2,8 @@ from typing import Any, List, Tuple
 import pandas
 import numpy as np
 from .by_category import segment_by_categories_and_slk_true_discontinuities
-from ._kernels import longest_overlap_positions
-from .linspace_steps import linspace_steps
+from ._kernels import longest_overlap_positions_batch
+from .linspace_steps import linspace_steps_batch
 
 def split_rows_by_category_to_max_segment_length(
     data:Any,
@@ -74,6 +74,22 @@ def split_rows_by_category_to_max_segment_length(
         })
     )
 
+    expansion_rows = list(new_index_summary.itertuples(index=True))
+    expansion_from = np.array([
+        row[1] if row[1] - row[2] == row[3] - row[4] else row[3]
+        for row in expansion_rows
+    ], dtype=np.float64)
+    expansion_to = np.array([
+        row[2] if row[1] - row[2] == row[3] - row[4] else row[4]
+        for row in expansion_rows
+    ], dtype=np.float64)
+    expanded_measure = linspace_steps_batch(
+        measure_from=expansion_from,
+        measure_to=expansion_to,
+        multiples=max_segment_length,
+        minimum_length=min_segment_length,
+    )
+
     # create lists to hold the new data in chunks
     sub_results_slk_true = []
     sub_results_min_max_original_index = []
@@ -81,24 +97,20 @@ def split_rows_by_category_to_max_segment_length(
 
     # stretch index;
     # The following logic is similar to a pandas.DataFrame.reindex() call with an Index.repeat()
-    for (
+    for row, new_steps in zip(expansion_rows, expanded_measure):
+        (
             index,
             slk_from,
             slk_to,
             true_from,
             true_to,
             sorted_index_from,
-            sorted_index_to
-        ) in new_index_summary.itertuples(index=True):
+            sorted_index_to,
+        ) = row
 
         if(slk_to-slk_from == true_to-true_from):
             # if the slk spacing is the same as true spacing we can make the SLK's land on nice round multiples of the spacing
-            new_slks = linspace_steps(
-                measure_from   = slk_from,
-                measure_to     = slk_to,
-                multiples      = max_segment_length,
-                minimum_length = min_segment_length
-            )
+            new_slks = new_steps
 
             new_trues = np.round(
                 (new_slks - slk_from)
@@ -108,12 +120,7 @@ def split_rows_by_category_to_max_segment_length(
                 3
             )
         else:
-            new_trues = linspace_steps(
-                measure_from   = true_from,
-                measure_to     = true_to,
-                multiples      = max_segment_length,
-                minimum_length = min_segment_length
-            )
+            new_trues = new_steps
 
             new_slks = np.round(
                 (new_trues - true_from)
@@ -262,15 +269,21 @@ def _recombine_segmentation_index(
     source_from_all = original_data[measure[0]].to_numpy(dtype=np.float64)
     source_to_all = original_data[measure[1]].to_numpy(dtype=np.float64)
 
+    group_ranges = []
+    overlap_groups = []
     for group_start, group_end in zip(group_starts, group_ends):
         source_start = int(segmentation.iloc[group_start][grouping_range[0]])
         source_end = int(segmentation.iloc[group_start][grouping_range[1]]) + 1
-        selected_positions[group_start:group_end] = longest_overlap_positions(
+        group_ranges.append((group_start, group_end, source_start))
+        overlap_groups.append((
             output_from[group_start:group_end],
             output_to[group_start:group_end],
             source_from_all[source_start:source_end],
             source_to_all[source_start:source_end],
-        ) + source_start
+        ))
+    overlap_results = longest_overlap_positions_batch(overlap_groups)
+    for (group_start, group_end, source_start), positions in zip(group_ranges, overlap_results):
+        selected_positions[group_start:group_end] = positions + source_start
 
     source_labels = original_data.index.to_numpy()
     if np.any(selected_positions < 0):

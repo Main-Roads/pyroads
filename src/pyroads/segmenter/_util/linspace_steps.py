@@ -1,5 +1,76 @@
 import numpy as np
 
+from pyroads._backend import announce_fallback
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
+
+
+def linspace_steps_batch(
+        measure_from: np.ndarray,
+        measure_to: np.ndarray,
+        multiples: float,
+        minimum_length: float = 0.0,
+    ) -> list[np.ndarray]:
+    """Expand independent intervals, using the native batch path when enabled."""
+    measure_from = np.asarray(measure_from, dtype=np.float64)
+    measure_to = np.asarray(measure_to, dtype=np.float64)
+    if measure_from.shape != measure_to.shape:
+        raise ValueError("measure_from and measure_to must have matching lengths")
+    if np.any(measure_from > measure_to):
+        raise ValueError("measure from must be less than measure to")
+
+    if _rust_native is not None:
+        values, offsets = _rust_native.linspace_steps_batch(
+            np.ascontiguousarray(measure_from),
+            np.ascontiguousarray(measure_to),
+            np.full(measure_from.shape, multiples, dtype=np.float64),
+            np.full(measure_from.shape, minimum_length, dtype=np.float64),
+        )
+        values = np.asarray(values)
+        offsets = np.asarray(offsets)
+        return [values[start:end] for start, end in zip(offsets[:-1], offsets[1:])]
+
+    announce_fallback()
+    return [
+        linspace_steps(start, end, multiples, minimum_length)
+        for start, end in zip(measure_from, measure_to)
+    ]
+
+
+def fixed_segment_boundaries_batch(
+        measure_from: np.ndarray,
+        measure_to: np.ndarray,
+        segment_length: float,
+    ) -> list[np.ndarray]:
+    """Return fixed-size interval boundaries for independent numeric ranges."""
+    measure_from = np.asarray(measure_from, dtype=np.float64)
+    measure_to = np.asarray(measure_to, dtype=np.float64)
+    if measure_from.shape != measure_to.shape:
+        raise ValueError("measure_from and measure_to must have matching lengths")
+    if np.any(measure_from > measure_to):
+        raise ValueError("measure from must be less than measure to")
+    if segment_length <= 0:
+        raise ValueError("segment_length must be positive")
+
+    if _rust_native is not None:
+        values, offsets = _rust_native.fixed_segment_boundaries_batch(
+            np.ascontiguousarray(measure_from),
+            np.ascontiguousarray(measure_to),
+            segment_length,
+        )
+        values = np.asarray(values)
+        offsets = np.asarray(offsets)
+        return [values[start:end] for start, end in zip(offsets[:-1], offsets[1:])]
+
+    announce_fallback()
+    return [
+        np.r_[start + np.arange(np.ceil((end - start) / segment_length)) * segment_length, end]
+        for start, end in zip(measure_from, measure_to)
+    ]
+
 
 def linspace_steps(measure_from: float, measure_to: float, multiples: float, minimum_length:float=0.0) -> np.ndarray:
     """
@@ -39,6 +110,16 @@ def linspace_steps(measure_from: float, measure_to: float, multiples: float, min
     if measure_from > measure_to:
         raise ValueError("measure from must be less than measure to")
 
+    if _rust_native is not None:
+        values, offsets = _rust_native.linspace_steps_batch(
+            np.array([measure_from], dtype=np.float64),
+            np.array([measure_to], dtype=np.float64),
+            np.array([multiples], dtype=np.float64),
+            np.array([minimum_length], dtype=np.float64),
+        )
+        return np.asarray(values)[np.asarray(offsets[0]):np.asarray(offsets[1])]
+
+    announce_fallback()
     left  = np.ceil (measure_from / multiples)
     right = np.floor(measure_to   / multiples)
     num   = right - left

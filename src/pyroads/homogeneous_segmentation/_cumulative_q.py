@@ -5,6 +5,13 @@ which supports Spatial Heterogeneity-based Segmentation (SHS) method.
 import numpy as np
 import numpy.typing as npt
 
+from pyroads._backend import announce_fallback
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
+
 
 def cumulative_q (data:npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     """ Computes the cumulative Q-statistic for each potential split index in an array.
@@ -34,6 +41,11 @@ def cumulative_q (data:npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         npt.ArrayLike: An array of the same length as 'data', containing the computed Q values for each potential split
         point.
     """
+
+    if len(data) > 0 and _rust_native is not None:
+        return _rust_native.cumulative_q(np.ascontiguousarray(data, dtype=np.float64))
+    if _rust_native is None:
+        announce_fallback()
 
     cum_n                = np.arange(1, len(data))  # 1:(n - 1)         # Used as denominator later ∴ Must start from 1.
     # This next line ensures that we have preserved the original functionality; that cum_n is 1 item shorter than data
