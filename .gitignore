@@ -1,8 +1,20 @@
 __pycache__
 *.pyc
+*.so
+*.pyd
 .idea
 .vscode
 .pytest_cache
+.ruff_cache/
+.mypy_cache/
+.coverage
 *.egg-info/
 
+ephemerals/
+
 .venv/
+
+target/
+
+rust/_native/.github/
+rust/_native/uv.lock
