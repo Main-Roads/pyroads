@@ -21,7 +21,13 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from pyroads._backend import announce_fallback
 from . import _validation as validation
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
 
 try:
     from numba import njit, prange
@@ -48,7 +54,7 @@ except ImportError:
 
 
 @njit(cache=True, nogil=True)
-def _find_overlapping_intervals_sorted(
+def _find_overlapping_intervals_sorted_numba(
     tgt_starts: np.ndarray,
     tgt_ends: np.ndarray,
     data_starts: np.ndarray,
@@ -147,6 +153,23 @@ def _find_overlapping_intervals_sorted(
         tgt_indices[:result_count],
         data_indices[:result_count],
         overlap_lens[:result_count],
+    )
+
+
+def _find_overlapping_intervals_sorted(
+    tgt_starts: np.ndarray,
+    tgt_ends: np.ndarray,
+    data_starts: np.ndarray,
+    data_ends: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Use the optional Rust kernel or fall back to the Numba kernel."""
+    if _rust_native is not None:
+        return _rust_native.find_overlapping_intervals(
+            tgt_starts, tgt_ends, data_starts, data_ends
+        )
+    announce_fallback()
+    return _find_overlapping_intervals_sorted_numba(
+        tgt_starts, tgt_ends, data_starts, data_ends
     )
 
 
@@ -492,7 +515,7 @@ def _aggregate_single_target(
 
 
 @njit(cache=True, nogil=True)
-def _aggregate_all_targets_numeric(
+def _aggregate_all_targets_numeric_numba(
     n_targets: int,
     tgt_indices: np.ndarray,
     data_indices: np.ndarray,
@@ -594,6 +617,94 @@ def _aggregate_all_targets_numeric(
     return results
 
 
+def _aggregate_all_targets_numeric(
+    n_targets: int,
+    tgt_indices: np.ndarray,
+    data_indices: np.ndarray,
+    overlap_lens: np.ndarray,
+    col_values: np.ndarray,
+    data_lengths: np.ndarray,
+    original_indices: np.ndarray,
+    target_lengths: np.ndarray,
+    agg_type: int,
+    percentile: float,
+) -> np.ndarray:
+    """Dispatch batched numeric aggregation to Rust or Numba."""
+    if _rust_native is not None:
+        return _rust_native.aggregate_all_targets_numeric(
+            n_targets,
+            tgt_indices,
+            data_indices,
+            overlap_lens,
+            col_values,
+            data_lengths,
+            original_indices,
+            target_lengths,
+            agg_type,
+            percentile,
+        )
+    announce_fallback()
+    return _aggregate_all_targets_numeric_numba(
+        n_targets,
+        tgt_indices,
+        data_indices,
+        overlap_lens,
+        col_values,
+        data_lengths,
+        original_indices,
+        target_lengths,
+        agg_type,
+        percentile,
+    )
+
+
+def _aggregate_all_targets_numeric_batch(
+    n_targets: int,
+    tgt_indices: np.ndarray,
+    data_indices: np.ndarray,
+    overlap_lens: np.ndarray,
+    col_values: list[np.ndarray],
+    data_lengths: np.ndarray,
+    original_indices: np.ndarray,
+    target_lengths: np.ndarray,
+    agg_types: np.ndarray,
+    percentiles: np.ndarray,
+) -> np.ndarray:
+    """Aggregate all numeric actions for one group in one native call."""
+    if not col_values:
+        return np.empty((0, n_targets), dtype=np.float64)
+    values = np.ascontiguousarray(np.vstack(col_values), dtype=np.float64)
+    if _rust_native is not None:
+        flat = _rust_native.aggregate_all_targets_numeric_batch(
+            n_targets,
+            np.ascontiguousarray(tgt_indices, dtype=np.int64),
+            np.ascontiguousarray(data_indices, dtype=np.int64),
+            np.ascontiguousarray(overlap_lens, dtype=np.float64),
+            values,
+            np.ascontiguousarray(data_lengths, dtype=np.float64),
+            np.ascontiguousarray(original_indices, dtype=np.int64),
+            np.ascontiguousarray(target_lengths, dtype=np.float64),
+            np.ascontiguousarray(agg_types, dtype=np.int64),
+            np.ascontiguousarray(percentiles, dtype=np.float64),
+        )
+        return np.asarray(flat).reshape((len(col_values), n_targets))
+    return np.vstack([
+        _aggregate_all_targets_numeric(
+            n_targets,
+            tgt_indices,
+            data_indices,
+            overlap_lens,
+            values[action_index],
+            data_lengths,
+            original_indices,
+            target_lengths,
+            int(agg_types[action_index]),
+            float(percentiles[action_index]),
+        )
+        for action_index in range(len(col_values))
+    ])
+
+
 # =============================================================================
 # CATEGORICAL AGGREGATION (KeepLongest for non-numeric)
 # =============================================================================
@@ -611,6 +722,25 @@ def _aggregate_keep_longest_categorical(
 
     This function runs in Python (not Numba) to handle arbitrary Python objects.
     """
+    if _rust_native is not None:
+        try:
+            codes, uniques = pd.factorize(col_values, sort=False, use_na_sentinel=True)
+            result_codes = _rust_native.aggregate_keep_longest_categorical(
+                n_targets,
+                np.ascontiguousarray(tgt_indices, dtype=np.int64),
+                np.ascontiguousarray(data_indices, dtype=np.int64),
+                np.ascontiguousarray(overlap_lens, dtype=np.float64),
+                np.ascontiguousarray(codes, dtype=np.int64),
+            )
+            results = np.empty(n_targets, dtype=object)
+            results[:] = None
+            valid = np.asarray(result_codes) >= 0
+            results[valid] = np.asarray(uniques, dtype=object)[np.asarray(result_codes)[valid]]
+            return results
+        except (TypeError, ValueError):
+            pass
+
+    announce_fallback()
     results = np.empty(n_targets, dtype=object)
     results[:] = None
 
@@ -793,6 +923,27 @@ def on_slk_intervals_numba(
 
     processed_groups = 0
 
+    rust_group_overlaps = None
+    if _rust_native is not None:
+        rust_inputs = []
+        rust_keys = []
+        for key, target_group in target_groups:
+            key_tuple = key if isinstance(key, tuple) else (key,)
+            data_group = data_groups.get(key_tuple)
+            if data_group is None or len(data_group) == 0:
+                continue
+            rust_keys.append(key_tuple)
+            rust_inputs.append(
+                (
+                    target_group[slk_from].to_numpy(dtype=np.float64),
+                    target_group[slk_to].to_numpy(dtype=np.float64),
+                    data_group[slk_from].to_numpy(dtype=np.float64),
+                    data_group[slk_to].to_numpy(dtype=np.float64),
+                )
+            )
+        rust_results = _rust_native.find_overlapping_intervals_parallel(rust_inputs)
+        rust_group_overlaps = dict(zip(rust_keys, rust_results))
+
     # Process each group
     for key, target_group in target_groups:
         key_tuple = key if isinstance(key, tuple) else (key,)
@@ -813,9 +964,12 @@ def on_slk_intervals_numba(
         original_indices = data_group["_original_index"].to_numpy(dtype=np.int64)
 
         # Find sparse overlaps (THE KEY MEMORY OPTIMIZATION)
-        tgt_idx, data_idx, overlap_lens = _find_overlapping_intervals_sorted(
-            tgt_starts, tgt_ends, data_starts, data_ends
-        )
+        if rust_group_overlaps is not None and key_tuple in rust_group_overlaps:
+            tgt_idx, data_idx, overlap_lens = rust_group_overlaps[key_tuple]
+        else:
+            tgt_idx, data_idx, overlap_lens = _find_overlapping_intervals_sorted(
+                tgt_starts, tgt_ends, data_starts, data_ends
+            )
 
         if len(tgt_idx) == 0:
             processed_groups += 1
@@ -826,27 +980,34 @@ def on_slk_intervals_numba(
             target.index.get_loc(idx) for idx in target_group.index
         ]
 
-        # Process numeric columns with Numba
-        for action in numeric_actions:
-            col_values = data_group[action.column_name].to_numpy(dtype=np.float64)
-            agg_type, percentile = _get_agg_type_code(action.aggregation)
-
-            agg_results = _aggregate_all_targets_numeric(
+        # Process all numeric columns in one native/Numba batch per group.
+        if numeric_actions:
+            numeric_values = [
+                data_group[action.column_name].to_numpy(dtype=np.float64)
+                for action in numeric_actions
+            ]
+            numeric_agg_types = []
+            numeric_percentiles = []
+            for action in numeric_actions:
+                agg_type, percentile = _get_agg_type_code(action.aggregation)
+                numeric_agg_types.append(agg_type)
+                numeric_percentiles.append(percentile)
+            numeric_results = _aggregate_all_targets_numeric_batch(
                 n_targets=len(target_group),
                 tgt_indices=tgt_idx,
                 data_indices=data_idx,
                 overlap_lens=overlap_lens,
-                col_values=col_values,
+                col_values=numeric_values,
                 data_lengths=data_lengths,
                 original_indices=original_indices,
                 target_lengths=tgt_lengths,
-                agg_type=agg_type,
-                percentile=percentile,
+                agg_types=np.asarray(numeric_agg_types, dtype=np.int64),
+                percentiles=np.asarray(numeric_percentiles, dtype=np.float64),
             )
 
-            # Map results to output array
-            for local_idx, global_pos in enumerate(target_iloc_positions):
-                output_data[action.rename][global_pos] = agg_results[local_idx]
+            for action_index, action in enumerate(numeric_actions):
+                for local_idx, global_pos in enumerate(target_iloc_positions):
+                    output_data[action.rename][global_pos] = numeric_results[action_index, local_idx]
 
         # Process categorical columns in Python
         for action in categorical_actions:

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from .as_metres import as_metres
+from pyroads.segmenter._util.linspace_steps import fixed_segment_boundaries_batch
 
 
 def stretch(
@@ -60,24 +61,32 @@ def stretch(
 	gcd = np.gcd.reduce(lengths)
 	
 	if segment_size == 'GCD':
-		segment_size = gcd
-	
-	if segment_size > gcd:
-		segment_size = gcd
+		segment_length = float(gcd)
+	else:
+		segment_length = float(segment_size)
+
+	if segment_length > gcd:
+		segment_length = float(gcd)
 		print(f'`segment_size` is too large. Defaulting to the GCD, of {gcd}m.')
 	
 	# Reshape the data into size specified in 'obs_length'
-	new_data = new_data.reindex(new_data.index.repeat(np.ceil((new_data[ends[0]] - new_data[starts[0]]) / segment_size)))  # reindex by the number of intervals of specified length between the start and the end.
+	segment_boundaries = fixed_segment_boundaries_batch(
+		new_data[starts[0]].to_numpy(dtype=np.float64),
+		new_data[ends[0]].to_numpy(dtype=np.float64),
+		segment_length,
+	)
+	segment_counts = np.asarray([len(boundaries) - 1 for boundaries in segment_boundaries], dtype=np.int64)
+	new_data = new_data.reindex(new_data.index.repeat(segment_counts))
 	
 	# increment the start points by observation length
 	for start_slk, end_slk, name in zip(starts, ends, names):
-		new_data[name] = new_data[start_slk] + new_data.groupby(level=0).cumcount() * segment_size
+		new_data[name] = new_data[start_slk] + new_data.groupby(level=0).cumcount() * segment_length
 		if as_km:
 			new_data[name] = new_data[name] / 1000
 	
 	for start_slk, end_slk in zip(starts, ends):
 		# End SLKs are equal to the lead Start SLKS except where the segment ends
-		new_data[end_slk] = np.where((new_data[start_slk].shift(-1) - new_data[start_slk]) == segment_size, new_data[start_slk].shift(-1), new_data[end_slk])
+		new_data[end_slk] = np.where((new_data[start_slk].shift(-1) - new_data[start_slk]) == segment_length, new_data[start_slk].shift(-1), new_data[end_slk])
 	
 	new_data = new_data.reset_index(drop=True)
 	

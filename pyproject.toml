@@ -1,13 +1,10 @@
 [build-system]
-requires = [
-  "setuptools >= 40.9.0",
-  "wheel",
-]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.15,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "pyroads"
-version = "0.4.0"
+version = "0.5.0"
 description = "Tools for analysis of road asset data"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -33,6 +30,11 @@ polars = ["polars"]
 dask = ["dask[dataframe]"]
 dev = ["pytest", "pre-commit", "ruff", "pyright"]
 
+[tool.maturin]
+manifest-path = "rust/_native/Cargo.toml"
+python-source = "src"
+module-name = "pyroads._native"
+
 [tool.ruff]
 target-version = "py310"
 line-length = 120
@@ -55,4 +57,9 @@ markers = [
 ]
 testpaths = [
     "test"
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]

@@ -4,6 +4,13 @@
 from typing import Any, List, Tuple
 import pandas
 import numpy as np
+
+from pyroads._backend import announce_fallback
+
+try:
+    import pyroads._native as _rust_native
+except ImportError:
+    _rust_native = None
 CATEGORY_COLUMN_NAME = "seg.ctg"
 
 
@@ -56,13 +63,23 @@ def segment_by_categories_and_slk_discontinuities(
     data = data.sort_values(by=[*categories, measure_from])
     category_values = data[categories]
     boundaries = category_values.ne(category_values.shift()).any(axis=1).to_numpy(copy=True)
+    if len(boundaries) == 0:
+        return pandas.Series(dtype="u8", index=data.index)
     boundaries[0] = True
-    discontinuities = (
-        np.around(data[measure_to].to_numpy()[:-1], 3)
-        != np.around(data[measure_from].to_numpy()[1:], 3)
-    )
-    boundaries[1:] |= discontinuities
-    segment_ids = np.cumsum(boundaries, dtype=np.int64) - 1
+    if _rust_native is not None:
+        segment_ids = _rust_native.segment_ids_by_discontinuity(
+            np.ascontiguousarray(boundaries, dtype=np.uint8),
+            np.ascontiguousarray(data[measure_from].to_numpy(dtype=np.float64)),
+            np.ascontiguousarray(data[measure_to].to_numpy(dtype=np.float64)),
+        )
+    else:
+        announce_fallback()
+        discontinuities = (
+            np.around(data[measure_to].to_numpy()[:-1], 3)
+            != np.around(data[measure_from].to_numpy()[1:], 3)
+        )
+        boundaries[1:] |= discontinuities
+        segment_ids = np.cumsum(boundaries, dtype=np.int64) - 1
     return pandas.Series(segment_ids.astype("u8"), index=data.index)
 
 def segment_by_categories_and_slk_true_discontinuities(
@@ -120,20 +137,32 @@ def segment_by_categories_and_slk_true_discontinuities(
     data = data.sort_values(by=[*categories, measure_true_from])
     category_values = data[categories]
     category_boundaries = category_values.ne(category_values.shift()).any(axis=1).to_numpy(copy=True)
+    if len(category_boundaries) == 0:
+        return pandas.Series(dtype="u8", index=data.index)
     category_boundaries[0] = True
 
-    slk_discontinuities = (
-        np.around(data[measure_slk_to].to_numpy()[:-1], 3)
-        != np.around(data[measure_slk_from].to_numpy()[1:], 3)
-    )
-    true_discontinuities = (
-        np.around(data[measure_true_to].to_numpy()[:-1], 3)
-        != np.around(data[measure_true_from].to_numpy()[1:], 3)
-    )
+    if _rust_native is not None:
+        segment_ids = _rust_native.segment_ids_by_true_discontinuity(
+            np.ascontiguousarray(category_boundaries, dtype=np.uint8),
+            np.ascontiguousarray(data[measure_slk_from].to_numpy(dtype=np.float64)),
+            np.ascontiguousarray(data[measure_slk_to].to_numpy(dtype=np.float64)),
+            np.ascontiguousarray(data[measure_true_from].to_numpy(dtype=np.float64)),
+            np.ascontiguousarray(data[measure_true_to].to_numpy(dtype=np.float64)),
+        )
+    else:
+        announce_fallback()
+        slk_discontinuities = (
+            np.around(data[measure_slk_to].to_numpy()[:-1], 3)
+            != np.around(data[measure_slk_from].to_numpy()[1:], 3)
+        )
+        true_discontinuities = (
+            np.around(data[measure_true_to].to_numpy()[:-1], 3)
+            != np.around(data[measure_true_from].to_numpy()[1:], 3)
+        )
 
-    boundaries = category_boundaries.copy()
-    boundaries[1:] |= slk_discontinuities | true_discontinuities
-    segment_ids = np.cumsum(boundaries, dtype=np.int64) - 1
+        boundaries = category_boundaries.copy()
+        boundaries[1:] |= slk_discontinuities | true_discontinuities
+        segment_ids = np.cumsum(boundaries, dtype=np.int64) - 1
 
     return pandas.Series(segment_ids.astype("u8"), index=data.index)
 

@@ -121,7 +121,7 @@ def test_split_rows_by_segmentation_with_poes():
 
 
     # created during debugging by hand then checked line by line.
-    actual_result = pd.DataFrame(
+    _actual_result = pd.DataFrame(
         columns=["road_no", "carriageway", "xsp", "slk_from", "slk_to", "true_from", "true_to", "original_index", "additional_index"],
         data=[
             ["H001", "L", "L1", 0.030, 0.035, 0.010, 0.015,    0.0, np.nan], # yes
@@ -179,7 +179,7 @@ def test_split_rows_by_segmentation_preserves_indexes():
 
     import pandas as pd
     
-    original_segmentation = pd.DataFrame(
+    _original_segmentation = pd.DataFrame(
         columns=["road_no", "carriageway", "xsp", "slk_from", "slk_to", "true_from", "true_to", "value"],
         data=[
             ["H001", "L", "L1", 0.030, 0.040, 0.010, 0.020, "a"],
@@ -195,7 +195,7 @@ def test_split_rows_by_segmentation_preserves_indexes():
         ]
     ).set_index("value")
 
-    additional_segmentation = pd.DataFrame(
+    _additional_segmentation = pd.DataFrame(
         columns=["road_no", "carriageway", "xsp", "slk_from", "slk_to", "true_from", "true_to", "value"],
         data=[
             ["H001", "L", "L1", 0.030, 0.045, 0.010, 0.025, "z"],

@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
-from pyroads.merge import merge as merge_module
+from pyroads import merge as merge_module
 
 
 @dataclass

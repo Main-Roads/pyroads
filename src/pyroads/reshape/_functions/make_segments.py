@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from .as_metres import as_metres
+from pyroads.segmenter._util.linspace_steps import fixed_segment_boundaries_batch
 
 def make_segments(
 	data: Any,
@@ -80,7 +81,13 @@ def make_segments(
 	new_data.insert(len(new_data.columns) - 1, 'Length', new_data[ends[0]] - new_data[starts[0]])
 	
 	# Reshape the data into size specified in 'max_segment'
-	new_data = new_data.reindex(new_data.index.repeat(np.ceil((new_data[ends[0]] - new_data[starts[0]]) / max_segment)))  # reindex by the number of intervals of specified length between the start and the end.
+	segment_boundaries = fixed_segment_boundaries_batch(
+		new_data[starts[0]].to_numpy(dtype=np.float64),
+		new_data[ends[0]].to_numpy(dtype=np.float64),
+		max_segment,
+	)
+	segment_counts = np.asarray([len(boundaries) - 1 for boundaries in segment_boundaries], dtype=np.int64)
+	new_data = new_data.reindex(new_data.index.repeat(segment_counts))
 	
 	#A start_end is any observation that is too small to be split, hence it is both the start and the end of a segment.	
 	new_data['start_end'] = np.where(new_data['Length'] <= max_segment, True, False)

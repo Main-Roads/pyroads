@@ -155,7 +155,7 @@ def test_test_split_rows_by_category_to_max_segment_length_troublesome():
         ],
     ).set_index("index")
 
-    result = split_rows_by_category_to_max_segment_length(
+    _result = split_rows_by_category_to_max_segment_length(
         data_to_segment,
         categories=["road_number", "cross_section_number_with_infill"],
         measure_slk =("slk_from", "slk_to"),

@@ -6,8 +6,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from pyroads._backend import announce_fallback
 from ..check_segmentation import check_linear_index, check_linear_index_is_ordered_and_disjoint
-from .._kernels import _cross_sections_numba
+from .._kernels import _cross_sections_numba, _rust_native
 
 
 class CN:
@@ -129,7 +130,14 @@ def cross_sections(
         events[CN.event_measure_diff] = events[CN.event_measure_true] - events[CN.event_measure_true].shift(
             1, fill_value=events[CN.event_measure_true].iloc[0]
         )
-        if _cross_sections_numba is not None:
+        if _rust_native is not None:
+            cross_sections_kernel = _rust_native.cross_sections
+        elif _cross_sections_numba is not None:
+            announce_fallback()
+            cross_sections_kernel = _cross_sections_numba
+        else:
+            cross_sections_kernel = None
+        if cross_sections_kernel is not None:
             path_ids: dict[tuple[Hashable, ...], int] = {}
             path_values: list[tuple[Hashable, ...]] = []
             event_path = []
@@ -155,7 +163,7 @@ def cross_sections(
             empty_outputs.extend([np.empty(0, dtype=np.int64) for _ in range(2)])
             empty_outputs.append(np.empty(0, dtype=np.float64))
             empty_outputs.append(np.empty(0, dtype=np.int64))
-            output_count = _cross_sections_numba(
+            output_count = cross_sections_kernel(
                 event_measure_true,
                 event_measure_slk,
                 event_type,
@@ -167,7 +175,7 @@ def cross_sections(
             outputs.extend([np.empty(output_count, dtype=np.int64) for _ in range(2)])
             outputs.append(np.empty(output_count, dtype=np.float64))
             outputs.append(np.empty(output_count, dtype=np.int64))
-            _cross_sections_numba(
+            cross_sections_kernel(
                 event_measure_true,
                 event_measure_slk,
                 event_type,

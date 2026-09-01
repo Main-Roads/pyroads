@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 - 2026-09-01
+
+### Added
+
+- Added Rayon-backed Rust kernels for the heaviest segmentation, reshaping, and
+  interval merge operations.
+- Added native extension packaging for GitHub source installs and platform
+  wheels.
+
+### Changed
+
+- Rust is now used automatically when the native extension is available, with
+  the existing Numba/Python implementations retained as a fallback.
+- Added developer documentation for building, testing, linting, and releasing
+  the project.
+
 ## 0.4.0 - 2026-08-11
 
 ### Added
