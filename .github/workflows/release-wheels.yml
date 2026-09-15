@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to build, for example v0.5.0"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,7 +25,7 @@ jobs:
       - name: Validate release version
         id: version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           python - <<'PY'
           import os
@@ -95,16 +101,24 @@ jobs:
       matrix:
         include:
           - python-tag: cp310
+            python-version: "3.10"
             python-directory: cp310-cp310
           - python-tag: cp311
+            python-version: "3.11"
             python-directory: cp311-cp311
           - python-tag: cp312
+            python-version: "3.12"
             python-directory: cp312-cp312
           - python-tag: cp313
+            python-version: "3.13"
             python-directory: cp313-cp313
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Set up validation Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Build manylinux x86-64 wheel
         uses: PyO3/maturin-action@v1
         with:
@@ -117,7 +131,7 @@ jobs:
         run: |
           wheel=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
           test -n "$wheel"
-          /opt/python/${{ matrix.python-directory }}/bin/python scripts/validate_wheel.py "$wheel" \
+          python scripts/validate_wheel.py "$wheel" \
             --expected-version "${{ needs.version.outputs.version }}"
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -146,7 +160,7 @@ jobs:
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ format('v{0}', needs.version.outputs.version) }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/*.whl --clobber
