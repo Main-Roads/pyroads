@@ -6,14 +6,101 @@ linear road-asset data. It consolidates the former `segmenter`,
 
 ## Installation
 
+### Precompiled release wheels
+
+Precompiled wheels are published on the
+[GitHub Releases page](https://github.com/Main-Roads/pyroads/releases). Choose
+the wheel matching your Python version, operating system, and architecture.
+The current release workflow builds CPython 3.10, 3.11, 3.12, and 3.13 wheels
+for Windows x86-64 and Linux x86-64.
+
+These wheels include the Rust extension, so Windows and Databricks users do not
+need Rust or a C compiler installed locally.
+
+#### Windows
+
+Check the Python version and architecture:
+
+```powershell
+python --version
+python -c "import platform; print(platform.machine())"
+```
+
+Windows wheel names follow this pattern:
+
+```text
+pyroads-0.5.0-cp312-cp312-win_amd64.whl
+```
+
+Download the matching asset from the release page and install it locally:
+
+```powershell
+python -m pip install path\to\pyroads-0.5.0-cp312-cp312-win_amd64.whl
+```
+
+You can also install the CPython 3.12 wheel directly:
+
+```powershell
+python -m pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.5.0/pyroads-0.5.0-cp312-cp312-win_amd64.whl"
+```
+
+#### Databricks and Linux x86-64
+
+Databricks requires the Linux x86-64 manylinux wheel; a Windows wheel will not
+work. Check the Python version in a notebook before selecting the asset:
+
+```python
+import sys
+print(sys.version)
+```
+
+The release workflow produces manylinux2014-compatible wheels with names like:
+
+```text
+pyroads-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+```
+
+Select the wheel matching the Databricks Python version from the
+[release assets](https://github.com/Main-Roads/pyroads/releases). For CPython
+3.12, install it in a notebook with:
+
+```python
+%pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.5.0/pyroads-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+```
+
+After uploading the same wheel to a Unity Catalog Volume, it can be installed
+with:
+
+```python
+%pip install /Volumes/<catalog>/<schema>/<volume>/pyroads-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+```
+
+The wheel can also be configured as a cluster or compute library when that is
+supported by the Databricks environment. Restart the Python environment only
+when required by that installation method.
+
+Verify the installed package and active native backend:
+
+```python
+import pyroads
+print(pyroads.__version__)
+print(pyroads.backend())
+```
+
+The expected backend for a release wheel is `rust`.
+
+### Developer installation from source
+
+Installing directly from GitHub builds the Rust extension locally and therefore
+requires a compatible Rust toolchain with `cargo` and `rustc`, plus a Python
+build environment:
+
 ```bash
 pip install git+https://github.com/Main-Roads/pyroads.git@release
 ```
 
-Installing directly from GitHub builds the Rust extension locally, so the
-machine must have a Rust toolchain with `cargo` and `rustc` available. The build
-frontend installs Maturin automatically. If the Rust extension cannot be
-imported at runtime, pyroads uses its Numba/Python fallback implementations.
+The build frontend installs Maturin automatically. If the Rust extension cannot
+be imported at runtime, pyroads uses its Numba/Python fallback implementations.
 
 For development from a checkout:
 

@@ -8,11 +8,13 @@
   interval merge operations.
 - Added native extension packaging for GitHub source installs and platform
   wheels.
+- Added automated GitHub Release wheels for Windows x86-64 and Linux x86-64.
 
 ### Changed
 
 - Rust is now used automatically when the native extension is available, with
   the existing Numba/Python implementations retained as a fallback.
+- Added `pyroads.backend()` to report the active Rust or Python backend.
 - Added developer documentation for building, testing, linting, and releasing
   the project.
 

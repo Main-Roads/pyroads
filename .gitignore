@@ -2,6 +2,8 @@ __pycache__
 *.pyc
 *.so
 *.pyd
+*.dll
+*.whl
 .idea
 .vscode
 .pytest_cache
@@ -15,6 +17,8 @@ ephemerals/
 .venv/
 
 target/
+build/
+dist/
 
 rust/_native/.github/
 rust/_native/uv.lock

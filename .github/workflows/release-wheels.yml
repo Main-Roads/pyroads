@@ -1,0 +1,157 @@
+name: Release wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Validate release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          tag = os.environ["RELEASE_TAG"]
+          if not tag.startswith("v") or len(tag) == 1:
+              raise SystemExit(f"Release tag must look like v<version>, got {tag!r}")
+          expected = tag[1:]
+
+          with open("pyproject.toml", "rb") as file:
+              project_version = tomllib.load(file)["project"]["version"]
+          with open("rust/_native/Cargo.toml", "rb") as file:
+              cargo_version = tomllib.load(file)["package"]["version"]
+          with open("rust/_native/Cargo.lock", "rb") as file:
+              lock_packages = tomllib.load(file)["package"]
+          lock_version = next(
+              package["version"]
+              for package in lock_packages
+              if package["name"] == "pyroads-native"
+          )
+
+          versions = {
+              "tag": expected,
+              "pyproject.toml": project_version,
+              "Cargo.toml": cargo_version,
+              "Cargo.lock": lock_version,
+          }
+          if len(set(versions.values())) != 1:
+              raise SystemExit(f"Release versions do not match: {versions}")
+          print(f"Validated release version {expected}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={expected}\n")
+          PY
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build Windows wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist --interpreter python
+      - name: Validate wheel
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem -Path dist -Filter *.whl | Select-Object -First 1
+          if ($null -eq $wheel) { throw "No wheel was produced" }
+          python scripts/validate_wheel.py $wheel.FullName --expected-version "${{ needs.version.outputs.version }}"
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-windows-cp${{ matrix.python-version }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-tag: cp310
+            python-directory: cp310-cp310
+          - python-tag: cp311
+            python-directory: cp311-cp311
+          - python-tag: cp312
+            python-directory: cp312-cp312
+          - python-tag: cp313
+            python-directory: cp313-cp313
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build manylinux x86-64 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: "2014"
+          args: >-
+            --release --out dist
+            --interpreter /opt/python/${{ matrix.python-directory }}/bin/python
+      - name: Validate wheel
+        run: |
+          wheel=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
+          test -n "$wheel"
+          /opt/python/${{ matrix.python-directory }}/bin/python scripts/validate_wheel.py "$wheel" \
+            --expected-version "${{ needs.version.outputs.version }}"
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-${{ matrix.python-tag }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v5
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Check wheel set
+        run: |
+          count=$(find dist -maxdepth 1 -type f -name '*.whl' | wc -l)
+          test "$count" -eq 8
+          test "$(find dist -maxdepth 1 -type f -name '*.whl' -printf '%f\n' | sort | uniq | wc -l)" -eq "$count"
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.whl --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/*.whl \
+              --title "pyroads $RELEASE_TAG" \
+              --generate-notes
+          fi
