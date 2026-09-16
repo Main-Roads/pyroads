@@ -44,11 +44,8 @@ wheel_url = next(
 	if f"-{pyver}-" in asset["name"]
 	and platform_tag in asset["name"]
 )
-```
 
-Install the selected wheel in the active environment:
-
-```python
+# Install the selected wheel in the active environment
 !python -m pip install $wheel_url
 ```
 
