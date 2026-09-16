@@ -767,7 +767,7 @@ def _aggregate_keep_longest_categorical(
 
     This function runs in Python (not Numba) to handle arbitrary Python objects.
     """
-    if _rust_native is not None and categorical_actions:
+    if _rust_native is not None:
         try:
             codes, uniques = pd.factorize(col_values, sort=False, use_na_sentinel=True)
             result_codes = _rust_native.aggregate_keep_longest_categorical(
@@ -834,6 +834,32 @@ def _aggregate_keep_longest_categorical(
 
         results[t] = best_value
 
+    return results
+
+
+def _aggregate_keep_longest_categorical_codes(
+    n_targets: int,
+    tgt_indices: np.ndarray,
+    data_indices: np.ndarray,
+    overlap_lens: np.ndarray,
+    codes: np.ndarray,
+    uniques: np.ndarray,
+) -> np.ndarray:
+    """Aggregate pre-factorized categorical values and restore their labels."""
+    if _rust_native is None:
+        raise RuntimeError("native categorical aggregation is unavailable")
+    result_codes = _rust_native.aggregate_keep_longest_categorical(
+        n_targets,
+        np.ascontiguousarray(tgt_indices, dtype=np.int64),
+        np.ascontiguousarray(data_indices, dtype=np.int64),
+        np.ascontiguousarray(overlap_lens, dtype=np.float64),
+        np.ascontiguousarray(codes, dtype=np.int64),
+    )
+    result_codes = np.asarray(result_codes)
+    results = np.empty(n_targets, dtype=object)
+    results[:] = None
+    valid = result_codes >= 0
+    results[valid] = np.asarray(uniques, dtype=object)[result_codes[valid]]
     return results
 
 
@@ -920,6 +946,15 @@ def on_slk_intervals_numba(
     validation.ensure_output_columns_available(target.columns, column_actions)
     validation.ensure_aggregation_column_types(data, column_actions)
 
+    categorical_actions = []
+    numeric_actions = []
+    for action in column_actions:
+        if action.aggregation.type.value == AGG_KEEP_LONGEST:
+            if not _is_numeric_column(data[action.column_name]):
+                categorical_actions.append(action)
+                continue
+        numeric_actions.append(action)
+
     # Initialize output columns with appropriate dtypes
     output_data: Dict[str, np.ndarray] = {}
     output_dtypes: Dict[str, str] = {}  # Track dtype for each output column
@@ -934,9 +969,37 @@ def on_slk_intervals_numba(
         output_data[action.rename] = np.full(len(target), np.nan, dtype=np.float64)
         output_dtypes[action.rename] = "float64"
 
+    categorical_metadata: Dict[str, Tuple[str, np.ndarray, np.ndarray]] = {}
+    categorical_code_columns: list[str] = []
+    categorical_column_names = {
+        action.column_name for action in categorical_actions
+    }
+    for column_name in dict.fromkeys(
+        action.column_name
+        for action in column_actions
+        if action.column_name in categorical_column_names
+    ):
+        try:
+            codes, uniques = pd.factorize(
+                data[column_name], sort=False, use_na_sentinel=True
+            )
+        except (TypeError, ValueError):
+            continue
+        code_column = f"__pyroads_category_code_{len(categorical_code_columns)}"
+        categorical_metadata[column_name] = (
+            code_column,
+            np.asarray(uniques, dtype=object),
+            np.asarray(codes, dtype=np.int64),
+        )
+        categorical_code_columns.append(code_column)
+
     # Pre-extract needed columns from data
     data_needed_cols = list({action.column_name for action in column_actions})
-    data_subset = data[[*join_left, slk_from, slk_to, *data_needed_cols]].copy()
+    data_subset = data[
+        [*join_left, slk_from, slk_to, *data_needed_cols]
+    ].copy()
+    for column_name, (code_column, _, codes) in categorical_metadata.items():
+        data_subset[code_column] = codes
     data_subset["_original_index"] = data.index
     data_subset["_segment_len"] = data_subset[slk_to] - data_subset[slk_from]
 
@@ -956,20 +1019,10 @@ def on_slk_intervals_numba(
             f"{total_groups} group(s), {len(target)} target rows, {len(data)} data rows"
         )
 
-    # Determine which columns need categorical handling
-    categorical_actions = []
-    numeric_actions = []
-    for action in column_actions:
-        if action.aggregation.type.value == AGG_KEEP_LONGEST:
-            if not _is_numeric_column(data[action.column_name]):
-                categorical_actions.append(action)
-                continue
-        numeric_actions.append(action)
-
     processed_groups = 0
 
     rust_group_overlaps = None
-    if _rust_native is not None:
+    if _rust_native is not None and categorical_actions:
         rust_inputs = []
         rust_keys = []
         for key, target_group in target_groups:
@@ -1106,15 +1159,26 @@ def on_slk_intervals_numba(
 
         # Process categorical columns in Python
         for action in categorical_actions:
-            col_values = data_group[action.column_name].to_numpy(dtype=object)
-
-            agg_results = _aggregate_keep_longest_categorical(
-                n_targets=len(target_group),
-                tgt_indices=tgt_idx,
-                data_indices=data_idx,
-                overlap_lens=overlap_lens,
-                col_values=col_values,
-            )
+            metadata = categorical_metadata.get(action.column_name)
+            if metadata is not None and _rust_native is not None:
+                code_column, uniques, _ = metadata
+                agg_results = _aggregate_keep_longest_categorical_codes(
+                    n_targets=len(target_group),
+                    tgt_indices=tgt_idx,
+                    data_indices=data_idx,
+                    overlap_lens=overlap_lens,
+                    codes=data_group[code_column].to_numpy(dtype=np.int64),
+                    uniques=uniques,
+                )
+            else:
+                col_values = data_group[action.column_name].to_numpy(dtype=object)
+                agg_results = _aggregate_keep_longest_categorical(
+                    n_targets=len(target_group),
+                    tgt_indices=tgt_idx,
+                    data_indices=data_idx,
+                    overlap_lens=overlap_lens,
+                    col_values=col_values,
+                )
 
             for local_idx, global_pos in enumerate(target_iloc_positions):
                 output_data[action.rename][global_pos] = agg_results[local_idx]
