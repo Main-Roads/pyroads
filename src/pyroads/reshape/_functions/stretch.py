@@ -6,6 +6,11 @@ import pandas as pd
 from .as_metres import as_metres
 from pyroads.segmenter._util.linspace_steps import fixed_segment_boundaries_batch
 
+try:
+	import pyroads._native as _rust_native
+except ImportError:
+	_rust_native = None
+
 
 def stretch(
 		data: pd.DataFrame,
@@ -69,24 +74,52 @@ def stretch(
 		segment_length = float(gcd)
 		print(f'`segment_size` is too large. Defaulting to the GCD, of {gcd}m.')
 	
-	# Reshape the data into size specified in 'obs_length'
-	segment_boundaries = fixed_segment_boundaries_batch(
-		new_data[starts[0]].to_numpy(dtype=np.float64),
-		new_data[ends[0]].to_numpy(dtype=np.float64),
-		segment_length,
-	)
-	segment_counts = np.asarray([len(boundaries) - 1 for boundaries in segment_boundaries], dtype=np.int64)
-	new_data = new_data.reindex(new_data.index.repeat(segment_counts))
-	
-	# increment the start points by observation length
-	for start_slk, end_slk, name in zip(starts, ends, names):
-		new_data[name] = new_data[start_slk] + new_data.groupby(level=0).cumcount() * segment_length
-		if as_km:
-			new_data[name] = new_data[name] / 1000
-	
-	for start_slk, end_slk in zip(starts, ends):
-		# End SLKs are equal to the lead Start SLKS except where the segment ends
-		new_data[end_slk] = np.where((new_data[start_slk].shift(-1) - new_data[start_slk]) == segment_length, new_data[start_slk].shift(-1), new_data[end_slk])
+	# Reshape data into size specified in 'obs_length'.
+	primary_starts = new_data[starts[0]].to_numpy(dtype=np.float64)
+	primary_ends = new_data[ends[0]].to_numpy(dtype=np.float64)
+	if _rust_native is not None:
+		source_indices, part_indices = _rust_native.fixed_segment_rows(
+			np.ascontiguousarray(primary_starts),
+			np.ascontiguousarray(primary_ends),
+			segment_length,
+		)
+		source_indices = np.asarray(source_indices, dtype=np.int64)
+		part_indices = np.asarray(part_indices, dtype=np.int64)
+		new_data = new_data.iloc[source_indices].copy()
+		is_last_part = np.r_[
+			source_indices[1:] != source_indices[:-1],
+			True,
+		] if len(source_indices) else np.empty(0, dtype=bool)
+
+		for start_slk, end_slk, name in zip(starts, ends, names):
+			source_start = new_data[start_slk].to_numpy(dtype=np.float64)
+			source_end = new_data[end_slk].to_numpy(dtype=np.float64)
+			new_starts = source_start + part_indices * segment_length
+			new_ends = new_starts + segment_length
+			new_ends[is_last_part] = source_end[is_last_part]
+			new_data[name] = new_starts / 1000 if as_km else new_starts
+			new_data[end_slk] = new_ends
+	else:
+		segment_boundaries = fixed_segment_boundaries_batch(
+			primary_starts,
+			primary_ends,
+			segment_length,
+		)
+		segment_counts = np.asarray(
+			[len(boundaries) - 1 for boundaries in segment_boundaries],
+			dtype=np.int64,
+		)
+		new_data = new_data.reindex(new_data.index.repeat(segment_counts))
+
+		# increment the start points by observation length
+		for start_slk, end_slk, name in zip(starts, ends, names):
+			new_data[name] = new_data[start_slk] + new_data.groupby(level=0).cumcount() * segment_length
+			if as_km:
+				new_data[name] = new_data[name] / 1000
+
+		for start_slk, end_slk in zip(starts, ends):
+			# End SLKs are equal to the lead Start SLKS except where the segment ends
+			new_data[end_slk] = np.where((new_data[start_slk].shift(-1) - new_data[start_slk]) == segment_length, new_data[start_slk].shift(-1), new_data[end_slk])
 	
 	new_data = new_data.reset_index(drop=True)
 	

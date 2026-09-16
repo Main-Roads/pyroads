@@ -1394,6 +1394,43 @@ fn fixed_segment_boundaries_batch<'py>(
     ))
 }
 
+#[pyfunction]
+fn fixed_segment_rows<'py>(
+    py: Python<'py>,
+    measure_from: PyReadonlyArray1<'py, f64>,
+    measure_to: PyReadonlyArray1<'py, f64>,
+    segment_length: f64,
+) -> PyResult<(Py<PyArray1<i64>>, Py<PyArray1<i64>>)> {
+    let measure_from = measure_from.as_slice()?;
+    let measure_to = measure_to.as_slice()?;
+    if measure_from.len() != measure_to.len() || segment_length <= 0.0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "fixed segment arrays must match and segment_length must be positive",
+        ));
+    }
+    let rows: Vec<Vec<i64>> = (0..measure_from.len())
+        .into_par_iter()
+        .map(|index| {
+            let count = ((measure_to[index] - measure_from[index]) / segment_length)
+                .ceil()
+                .max(0.0) as usize;
+            (0..count).map(|part| part as i64).collect()
+        })
+        .collect();
+    let mut source_indices = Vec::new();
+    let mut part_indices = Vec::new();
+    for (source, parts) in rows.into_iter().enumerate() {
+        for part in parts {
+            source_indices.push(source as i64);
+            part_indices.push(part);
+        }
+    }
+    Ok((
+        PyArray1::from_vec(py, source_indices).unbind(),
+        PyArray1::from_vec(py, part_indices).unbind(),
+    ))
+}
+
 fn cumulative_statistic(data: &[f64], q_statistic: bool) -> Vec<f64> {
     if data.len() < 2 {
         return Vec::new();
@@ -1710,6 +1747,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(segment_ids_by_discontinuity, m)?)?;
     m.add_function(wrap_pyfunction!(segment_ids_by_true_discontinuity, m)?)?;
     m.add_function(wrap_pyfunction!(fixed_segment_boundaries_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(fixed_segment_rows, m)?)?;
 
     m.add_function(wrap_pyfunction!(cumulative_p, m)?)?;
     m.add_function(wrap_pyfunction!(cumulative_q, m)?)?;
