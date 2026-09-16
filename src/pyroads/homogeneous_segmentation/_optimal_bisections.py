@@ -44,6 +44,22 @@ def optimal_bisections (
     if goal_function is None:
         raise ValueError(f"goal must be one of {list(_goal_functions.keys())}")
 
+    if (
+        _rust_native is not None
+        and cumulative_split_statistic in {cumulative_p, cumulative_q}
+    ):
+        variables_array = np.ascontiguousarray(
+            np.asarray(variables, dtype=np.float64)
+        )
+        result = _rust_native.optimal_bisections_pq_full(
+            variables_array,
+            np.ascontiguousarray(np.asarray(length, dtype=np.float64)),
+            minimum_segment_length,
+            0 if cumulative_split_statistic is cumulative_p else 1,
+            0 if goal == "min" else 1,
+        )
+        return np.asarray(result, dtype=np.int64)
+
     cumulative_length_left  = np.cumsum(length)
     cumulative_length_right = np.cumsum(length[::-1])[::-1]
     
@@ -80,11 +96,7 @@ def optimal_bisections (
         # print("did not split into 3... try 1 or 2?")
         assert len(np.split(k_mask,np.flatnonzero(k_mask[:-1] != k_mask[1:])+1)) in {1,2}
 
-    if (
-        np.any(k_mask)
-        and _rust_native is not None
-        and cumulative_split_statistic in {cumulative_p, cumulative_q}
-    ):
+    if np.any(k_mask) and _rust_native is not None:
         return np.asarray(
             _rust_native.optimal_bisections_pq(
                 np.ascontiguousarray(np.asarray(variables, dtype=np.float64)),

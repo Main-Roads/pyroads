@@ -1517,6 +1517,97 @@ fn optimal_bisections_pq<'py>(
     Ok(PyArray1::from_vec(py, result).unbind())
 }
 
+#[pyfunction]
+fn optimal_bisections_pq_full<'py>(
+    py: Python<'py>,
+    variables: PyReadonlyArray2<'py, f64>,
+    lengths: PyReadonlyArray1<'py, f64>,
+    minimum_segment_length: f64,
+    statistic: i64,
+    goal: i64,
+) -> PyResult<Py<PyArray1<i64>>> {
+    let variables_shape = variables.shape().to_vec();
+    let variables = variables.as_slice()?;
+    let lengths = lengths.as_slice()?;
+    if variables_shape.len() != 2 || variables_shape[1] < 2 || lengths.len() != variables_shape[1] {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "invalid optimal bisection input shapes",
+        ));
+    }
+
+    let n_values = lengths.len();
+    let mut left = vec![0.0; n_values];
+    let mut right = vec![0.0; n_values];
+    let mut total = 0.0;
+    for index in 0..n_values {
+        total += lengths[index];
+        left[index] = total;
+    }
+    total = 0.0;
+    for index in (0..n_values).rev() {
+        total += lengths[index];
+        right[index] = total;
+    }
+
+    // Match the existing Python mask expansion: a split is retained only when
+    // its three-position neighborhood contains no invalid boundary.
+    let mut k_mask = vec![0_u8; n_values];
+    for index in 0..n_values {
+        let start = index.saturating_sub(1);
+        let end = (index + 1).min(n_values - 1);
+        if (start..=end).all(|neighbor| {
+            left[neighbor] > minimum_segment_length && right[neighbor] > minimum_segment_length
+        }) {
+            k_mask[index] = 1;
+        }
+    }
+
+    let n_variables = variables_shape[0];
+    let k: Vec<usize> = k_mask
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &valid)| if valid != 0 { Some(index) } else { None })
+        .collect();
+    if k.is_empty() {
+        return Ok(PyArray1::from_vec(py, Vec::new()).unbind());
+    }
+
+    let statistics: Vec<Vec<f64>> = (0..n_variables)
+        .into_par_iter()
+        .map(|variable| {
+            cumulative_statistic(
+                &variables[variable * n_values..(variable + 1) * n_values],
+                statistic == 1,
+            )
+        })
+        .collect();
+    let mut objective = Vec::with_capacity(k.len().saturating_sub(1));
+    for &index in k.iter().filter(|&&index| index > 0) {
+        let mut sum = 0.0;
+        for values in &statistics {
+            sum += values[index - 1];
+        }
+        objective.push(sum / n_variables as f64);
+    }
+    let best = if goal == 0 {
+        objective.iter().copied().fold(f64::INFINITY, f64::min)
+    } else {
+        objective.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+    };
+    let result: Vec<i64> = objective
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &value)| {
+            if value == best {
+                Some((index + k[0]) as i64)
+            } else {
+                None
+            }
+        })
+        .collect();
+    Ok(PyArray1::from_vec(py, result).unbind())
+}
+
 fn segment_ids_impl(
     category_boundaries: &[u8],
     measure_from: &[f64],
@@ -1615,6 +1706,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(aggregate_keep_longest_categorical, m)?)?;
     m.add_function(wrap_pyfunction!(linspace_steps_batch, m)?)?;
     m.add_function(wrap_pyfunction!(optimal_bisections_pq, m)?)?;
+    m.add_function(wrap_pyfunction!(optimal_bisections_pq_full, m)?)?;
     m.add_function(wrap_pyfunction!(segment_ids_by_discontinuity, m)?)?;
     m.add_function(wrap_pyfunction!(segment_ids_by_true_discontinuity, m)?)?;
     m.add_function(wrap_pyfunction!(fixed_segment_boundaries_batch, m)?)?;
