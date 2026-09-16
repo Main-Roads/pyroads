@@ -17,67 +17,45 @@ for Windows x86-64 and Linux x86-64.
 These wheels include the Rust extension, so Windows and Databricks users do not
 need Rust or a C compiler installed locally.
 
-#### Windows
+#### Install the latest compatible wheel
 
-Check the Python version and architecture:
-
-```powershell
-python --version
-python -c "import platform; print(platform.machine())"
-```
-
-Windows wheel names follow this pattern:
-
-```text
-pyroads-0.6.0-cp312-cp312-win_amd64.whl
-```
-
-Download the matching asset from the release page and install it locally:
-
-```powershell
-python -m pip install path\to\pyroads-0.6.0-cp312-cp312-win_amd64.whl
-```
-
-You can also install the CPython 3.12 wheel directly:
-
-```powershell
-python -m pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.6.0/pyroads-0.6.0-cp312-cp312-win_amd64.whl"
-```
-
-#### Databricks and Linux x86-64
-
-Databricks requires the Linux x86-64 manylinux wheel; a Windows wheel will not
-work. Check the Python version in a notebook before selecting the asset:
+The following notebook-friendly snippet selects the latest release and the
+wheel matching the running CPython version and supported platform:
 
 ```python
 import sys
-print(sys.version)
+import requests
+
+pyver = f"cp{sys.version_info.major}{sys.version_info.minor}"
+
+if sys.platform == "win32":
+	platform_tag = "win_amd64"
+elif sys.platform.startswith("linux"):
+	platform_tag = "manylinux"
+else:
+	raise RuntimeError(f"Unsupported platform: {sys.platform}")
+
+release = requests.get(
+	"https://api.github.com/repos/Main-Roads/pyroads/releases/latest"
+	).json()
+wheel_url = next(
+	asset["browser_download_url"]
+	for asset in release["assets"]
+	if f"-{pyver}-" in asset["name"]
+	and platform_tag in asset["name"]
+)
 ```
 
-The release workflow produces manylinux2014-compatible wheels with names like:
-
-```text
-pyroads-0.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-```
-
-Select the wheel matching the Databricks Python version from the
-[release assets](https://github.com/Main-Roads/pyroads/releases). For CPython
-3.12, install it in a notebook with:
+Install the selected wheel in the active environment:
 
 ```python
-%pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.6.0/pyroads-0.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+!python -m pip install $wheel_url
 ```
 
-After uploading the same wheel to a Unity Catalog Volume, it can be installed
-with:
-
-```python
-%pip install /Volumes/<catalog>/<schema>/<volume>/pyroads-0.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-```
-
-The wheel can also be configured as a cluster or compute library when that is
-supported by the Databricks environment. Restart the Python environment only
-when required by that installation method.
+This works for local Windows/Linux environments and Databricks Linux
+notebooks. For a Unity Catalog Volume or cluster library, upload the selected
+wheel URL's file and configure that same wheel through the Databricks library
+interface.
 
 Verify the installed package and active native backend:
 
