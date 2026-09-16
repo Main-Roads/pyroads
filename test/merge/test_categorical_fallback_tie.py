@@ -97,3 +97,26 @@ def test_keep_longest_nonlexical_tie_prefers_first_optimized():
         from_to=("slk_from", "slk_to"),
     )
     assert result.loc[0, "category_keep"] == "C"
+
+
+def test_keep_longest_categorical_uses_native_capable_merge_path(monkeypatch):
+    target, data, actions = _categorical_tie_frames()
+    calls = []
+
+    def run_numba(**kwargs):
+        calls.append(kwargs["column_actions"])
+        return merge.on_slk_intervals_fallback(**kwargs)
+
+    monkeypatch.setattr(merge, "is_numba_available", lambda: True)
+    monkeypatch.setattr(merge, "on_slk_intervals_numba", run_numba)
+
+    result = merge.on_slk_intervals(
+        target=target,
+        data=data,
+        join_left=["road"],
+        column_actions=actions,
+        from_to=("slk_from", "slk_to"),
+    )
+
+    assert calls == [actions]
+    assert result.loc[0, "category_keep"] == "A"

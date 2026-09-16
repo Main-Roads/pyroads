@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..merge import Aggregation, Action as IntervalAction, on_slk_intervals
+from .._dataframe import supports_pandas_and_polars
 
 MODE = "mode"
 SUM = "sum"
@@ -15,6 +16,7 @@ class Action:
     aggregation: str = MODE
 
 
+@supports_pandas_and_polars
 def on_intervals(
     left_df,
     right_df,

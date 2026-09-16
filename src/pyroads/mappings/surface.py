@@ -2,6 +2,8 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from .._dataframe import supports_pandas_and_polars
+
 id_to_name = {
 	1: "Asphalt Dense Graded",
 	2: "Asphalt Intersection Mix",
@@ -21,6 +23,7 @@ id_to_name = {
 name_to_id =  dict((name, id) for id,name in id_to_name.items())
 
 
+@supports_pandas_and_polars
 def surf_type(data: Any, source: str = "surface_type", to: Literal["full", "short", "asphalt", "grouped", "group_id"] = "short", **kwargs) -> pd.Series:
 	source = kwargs.pop("from", source)
 	surf_id = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
@@ -46,6 +49,7 @@ def surf_type(data: Any, source: str = "surface_type", to: Literal["full", "shor
 	return data[source].map(surf_dict)
 
 
+@supports_pandas_and_polars
 def surf_id(data: Any, source: str = "surface_type", to="short", **kwargs) -> pd.Series:
 	source = kwargs.pop("from", source)
 	"""

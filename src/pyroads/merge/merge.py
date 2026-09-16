@@ -313,7 +313,10 @@ def _should_use_categorical_fallback(
     """Return column names that require categorical fallback."""
     needs_fallback: List[str] = []
     for action in column_actions:
-        if action.aggregation.type == AggregationType.KeepLongest:
+        if action.aggregation.type in {
+            AggregationType.KeepLongest,
+            AggregationType.KeepLongestSegment,
+        }:
             series = data_subset[action.column_name]
             if not is_numeric_dtype(series):
                 needs_fallback.append(action.column_name)
@@ -601,9 +604,13 @@ def _run_fast_merge(
     if not isinstance(target, pd.DataFrame) or not isinstance(data, pd.DataFrame):
         _validate_inputs(target, data, join_left, column_actions, from_to)
 
-    categorical_fallback = _should_use_categorical_fallback(data, column_actions)
     numeric_index = is_numeric_dtype(data.index)
-    if is_numba_available() and not categorical_fallback and numeric_index:
+    deprecated_categorical = any(
+        action.aggregation.type == AggregationType.KeepLongestSegment
+        and not is_numeric_dtype(data[action.column_name])
+        for action in column_actions
+    )
+    if is_numba_available() and numeric_index and not deprecated_categorical:
         return on_slk_intervals_numba(
             target=target,
             data=data,
@@ -666,6 +673,18 @@ def on_slk_intervals(
         >>> # Use optimized implementation with verbose output
         >>> result = on_slk_intervals(target, data, ["road"], actions, ("from", "to"), legacy=False, verbose=True)
     """
+    if _detect_dataframe_backend(target, data) == "polars":
+        from ._polars_merge import on_slk_intervals_polars
+
+        return on_slk_intervals_polars(
+            target=target,
+            data=data,
+            join_left=join_left,
+            column_actions=column_actions,
+            from_to=from_to,
+            verbose=verbose,
+        )
+
     # Keep the legacy flag for backwards compatibility; True selects the old path.
     if legacy:
         return on_slk_intervals_legacy(
@@ -980,9 +999,9 @@ def on_slk_intervals_optimized(
 
 
 def _detect_dataframe_backend(target: object, data: object) -> str:
-    """Detect whether inputs are pandas, polars, or dask DataFrames.
+    """Detect whether inputs are pandas or Polars DataFrames.
 
-    Returns "pandas", "polars", or "dask". Raises ``TypeError`` if `target`
+    Returns "pandas" or "polars". Raises ``TypeError`` if `target`
     and `data` belong to different backends.
     """
 
@@ -994,13 +1013,6 @@ def _detect_dataframe_backend(target: object, data: object) -> str:
 
             if isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
                 return "polars"
-        except ImportError:
-            pass
-        try:
-            import dask.dataframe as dd
-
-            if isinstance(frame, dd.DataFrame):
-                return "dask"
         except ImportError:
             pass
         return None
@@ -1034,16 +1046,15 @@ def on_slk_intervals_auto(
     """Dispatch to the appropriate merge backend and implementation.
 
     In addition to pandas DataFrames, `target` and `data` may both be Polars
-    DataFrames or both be Dask DataFrames -- the input type is detected
-    automatically and routed to the matching backend
-    (:func:`~pyroads.merge._polars_merge.on_slk_intervals_polars` or
-    :func:`~pyroads.merge._dask_merge.on_slk_intervals_dask`). Mixing
+    DataFrames -- the input type is detected automatically and routed to the
+    matching backend (:func:`~pyroads.merge._polars_merge.on_slk_intervals_polars`).
+    Mixing
     backends between `target` and `data` raises ``TypeError``.
 
     Args:
         target, data, join_left, column_actions, from_to: See
             :func:`on_slk_intervals` for parameter descriptions. `target` and
-            `data` may be pandas, Polars, or Dask DataFrames (both must be the
+            `data` may be pandas or Polars DataFrames (both must be the
             same type).
         prefer_optimized: When ``True`` the fastest available optimized path is
             used, when ``False`` the legacy implementation is enforced. If
@@ -1055,8 +1066,7 @@ def on_slk_intervals_auto(
             (Numba-backed) paths.
 
     Returns:
-        The merged DataFrame, in the same type as the input (pandas, Polars,
-        or a lazy Dask DataFrame).
+        The merged DataFrame, in the same type as the input (pandas or Polars).
     """
 
     backend = _detect_dataframe_backend(target, data)
@@ -1065,17 +1075,6 @@ def on_slk_intervals_auto(
         from ._polars_merge import on_slk_intervals_polars
 
         return on_slk_intervals_polars(
-            target=target,
-            data=data,
-            join_left=join_left,
-            column_actions=column_actions,
-            from_to=from_to,
-        )
-
-    if backend == "dask":
-        from ._dask_merge import on_slk_intervals_dask
-
-        return on_slk_intervals_dask(
             target=target,
             data=data,
             join_left=join_left,

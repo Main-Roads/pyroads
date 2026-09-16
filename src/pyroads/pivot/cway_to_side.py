@@ -1,5 +1,7 @@
 import pandas as pd
+from .._dataframe import supports_pandas_and_polars
 
+@supports_pandas_and_polars
 def cway_to_side(data, cway):
 
 	data_right = data[data[cway].isin(['s', 'r', 'S', 'R'])].copy()

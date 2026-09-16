@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pyroads"
-version = "0.5.0"
+version = "0.6.0"
 description = "Tools for analysis of road asset data"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -27,7 +27,6 @@ dependencies = [
 
 [project.optional-dependencies]
 polars = ["polars"]
-dask = ["dask[dataframe]"]
 dev = ["pytest", "pre-commit", "ruff", "pyright"]
 
 [tool.maturin]

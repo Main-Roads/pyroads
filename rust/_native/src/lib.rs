@@ -192,13 +192,41 @@ fn aggregate_target(
                 best_index as f64
             }
         }
-        AGG_KEEP_LONGEST_SEGMENT | AGG_KEEP_LONGEST => {
+        AGG_KEEP_LONGEST_SEGMENT => {
             let mut best_overlap = -1.0;
             let mut best_value = f64::NAN;
             for (&value, &overlap) in values.iter().zip(overlaps) {
                 if !value.is_nan() && overlap > best_overlap {
                     best_overlap = overlap;
                     best_value = value;
+                }
+            }
+            best_value
+        }
+        AGG_KEEP_LONGEST => {
+            let mut totals: Vec<(f64, f64, usize)> = Vec::new();
+            for (order, (&value, &overlap)) in values.iter().zip(overlaps).enumerate() {
+                if value.is_nan() {
+                    continue;
+                }
+                if let Some((_, total, _)) = totals
+                    .iter_mut()
+                    .find(|(candidate, _, _)| *candidate == value)
+                {
+                    *total += overlap;
+                } else {
+                    totals.push((value, overlap, order));
+                }
+            }
+            let mut best_value = f64::NAN;
+            let mut best_total = -1.0;
+            let mut best_order = usize::MAX;
+            for (value, total, order) in totals {
+                let tied = (total - best_total).abs() <= 1e-8 + 1e-5 * best_total.abs();
+                if total > best_total || (tied && order < best_order) {
+                    best_value = value;
+                    best_total = total;
+                    best_order = order;
                 }
             }
             best_value

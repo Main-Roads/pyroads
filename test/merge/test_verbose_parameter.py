@@ -112,8 +112,8 @@ def test_verbose_true_shows_output():
     sys.stdout = old_stdout
     output = captured_output.getvalue()
 
-    # Categorical actions use the optimized fallback path.
-    assert "[pyroads.merge] Falling back to categorical path" in output
+    # Categorical actions use the native-capable optimized path.
+    assert "[pyroads.merge] Numba sparse merge" in output
     assert "action(s)" in output
     assert "group(s)" in output
 

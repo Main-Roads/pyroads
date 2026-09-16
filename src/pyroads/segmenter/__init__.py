@@ -15,6 +15,28 @@ from ._util.check_segmentation import (
     check_monotonically_increasing_segments,
     check_no_reversed_segments,
 )
+from .._dataframe import supports_pandas_and_polars
+
+segment_by_categories_and_slk_discontinuities = supports_pandas_and_polars(
+    segment_by_categories_and_slk_discontinuities
+)
+segment_by_categories_and_slk_true_discontinuities = supports_pandas_and_polars(
+    segment_by_categories_and_slk_true_discontinuities
+)
+split_rows_by_category_to_max_segment_length = supports_pandas_and_polars(
+    split_rows_by_category_to_max_segment_length
+)
+split_rows_by_segmentation = supports_pandas_and_polars(split_rows_by_segmentation)
+cross_sections = supports_pandas_and_polars(cross_sections)
+cross_sections_normalised = supports_pandas_and_polars(cross_sections_normalised)
+check_linear_index = supports_pandas_and_polars(check_linear_index)
+check_linear_index_is_ordered_and_disjoint = supports_pandas_and_polars(
+    check_linear_index_is_ordered_and_disjoint
+)
+check_monotonically_increasing_segments = supports_pandas_and_polars(
+    check_monotonically_increasing_segments
+)
+check_no_reversed_segments = supports_pandas_and_polars(check_no_reversed_segments)
 
 __all__ = [
     "segment_by_categories_and_slk_discontinuities",

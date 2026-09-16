@@ -29,19 +29,19 @@ python -c "import platform; print(platform.machine())"
 Windows wheel names follow this pattern:
 
 ```text
-pyroads-0.5.0-cp312-cp312-win_amd64.whl
+pyroads-0.6.0-cp312-cp312-win_amd64.whl
 ```
 
 Download the matching asset from the release page and install it locally:
 
 ```powershell
-python -m pip install path\to\pyroads-0.5.0-cp312-cp312-win_amd64.whl
+python -m pip install path\to\pyroads-0.6.0-cp312-cp312-win_amd64.whl
 ```
 
 You can also install the CPython 3.12 wheel directly:
 
 ```powershell
-python -m pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.5.0/pyroads-0.5.0-cp312-cp312-win_amd64.whl"
+python -m pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.6.0/pyroads-0.6.0-cp312-cp312-win_amd64.whl"
 ```
 
 #### Databricks and Linux x86-64
@@ -57,7 +57,7 @@ print(sys.version)
 The release workflow produces manylinux2014-compatible wheels with names like:
 
 ```text
-pyroads-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pyroads-0.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 Select the wheel matching the Databricks Python version from the
@@ -65,14 +65,14 @@ Select the wheel matching the Databricks Python version from the
 3.12, install it in a notebook with:
 
 ```python
-%pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.5.0/pyroads-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+%pip install "https://github.com/Main-Roads/pyroads/releases/download/v0.6.0/pyroads-0.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
 ```
 
 After uploading the same wheel to a Unity Catalog Volume, it can be installed
 with:
 
 ```python
-%pip install /Volumes/<catalog>/<schema>/<volume>/pyroads-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+%pip install /Volumes/<catalog>/<schema>/<volume>/pyroads-0.6.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 The wheel can also be configured as a cluster or compute library when that is
@@ -175,7 +175,7 @@ result = on_slk_intervals(
 `on_slk_intervals()` uses the optimized implementation by default. The
 compatibility flag remains available: pass `legacy=True` to use the legacy
 implementation, or `legacy=False` explicitly to select the optimized path.
-Optional `polars` and `dask` extras provide alternate backends.
+The optional `polars` extra provides a Polars-native backend.
 
 ### Fetching Main Roads WA data
 

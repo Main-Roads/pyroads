@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0 - 2026-09-16
+
+### Changed
+
+- Added native Rust routing for numeric and categorical interval merge actions.
+- Added Polars support across the public dataframe APIs.
+- Removed the Dask backend.
+
 ## 0.5.0 - 2026-09-01
 
 ### Added
@@ -31,7 +39,7 @@
   merging, mappings, reshaping, and road-network data retrieval.
 - Added Numba-backed interval and segmentation kernels, with optimized merge
   and cross-section paths.
-- Added optional Polars and Dask merge backends.
+- Added an optional Polars merge backend.
 - Added consolidated tests, examples, documentation images, and benchmarks.
 
 ### Changed

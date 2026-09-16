@@ -8,6 +8,7 @@ import pandas as pd
 from ..pivot.cway_to_side import cway_to_side
 from ..pivot.lane_to_row import lane_to_row as _lane_to_row
 from .lane import get_lanes
+from .._dataframe import supports_pandas_and_polars
 
 
 def lane_to_side(value):
@@ -16,12 +17,14 @@ def lane_to_side(value):
     return result if isinstance(value, pd.Series) else result.iloc[0]
 
 
+@supports_pandas_and_polars
 def hsd_to_side(data, hsd):
     result = data.copy()
     result["side"] = result[hsd].map({"L": "L", "R": "R", "l": "L", "r": "R"})
     return result
 
 
+@supports_pandas_and_polars
 def lane_to_row(
     data: Any,
     dirn: str,
