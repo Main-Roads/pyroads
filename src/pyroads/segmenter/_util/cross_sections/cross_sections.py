@@ -159,23 +159,19 @@ def cross_sections(
             event_measure_slk = events[CN.event_measure_slk].to_numpy(dtype=np.float64)
             event_type = (events[CN.event_type].to_numpy() == "end").astype(np.int64)
             event_path_array = np.asarray(event_path, dtype=np.int64)
-            empty_outputs: list[Any] = [np.empty(0, dtype=np.float64) for _ in range(4)]
-            empty_outputs.extend([np.empty(0, dtype=np.int64) for _ in range(2)])
-            empty_outputs.append(np.empty(0, dtype=np.float64))
-            empty_outputs.append(np.empty(0, dtype=np.int64))
-            output_count = cross_sections_kernel(
-                event_measure_true,
-                event_measure_slk,
-                event_type,
-                event_path_array,
-                event_source,
-                *empty_outputs,
+            # A source can contribute at most once per event interval, so
+            # events * sources is a safe one-pass output capacity. This avoids
+            # the previous count-then-fill Rust round trip.
+            output_capacity = max(1, len(events) * max(1, len(source_labels)))
+            outputs: list[Any] = [
+                np.empty(output_capacity, dtype=np.float64) for _ in range(4)
+            ]
+            outputs.extend(
+                [np.empty(output_capacity, dtype=np.int64) for _ in range(2)]
             )
-            outputs: list[Any] = [np.empty(output_count, dtype=np.float64) for _ in range(4)]
-            outputs.extend([np.empty(output_count, dtype=np.int64) for _ in range(2)])
-            outputs.append(np.empty(output_count, dtype=np.float64))
-            outputs.append(np.empty(output_count, dtype=np.int64))
-            cross_sections_kernel(
+            outputs.append(np.empty(output_capacity, dtype=np.float64))
+            outputs.append(np.empty(output_capacity, dtype=np.int64))
+            output_count = cross_sections_kernel(
                 event_measure_true,
                 event_measure_slk,
                 event_type,
@@ -183,6 +179,7 @@ def cross_sections(
                 event_source,
                 *outputs,
             )
+            outputs = [output[:output_count] for output in outputs]
             group_index_list = [group_index] if not isinstance(group_index, tuple) else group_index
             for row_index in range(output_count):
                 path = path_values[outputs[4][row_index]]
