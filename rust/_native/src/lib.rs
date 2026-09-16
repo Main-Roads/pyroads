@@ -1074,6 +1074,118 @@ fn aggregate_all_targets_numeric_batch<'py>(
 }
 
 #[pyfunction]
+fn merge_numeric_group<'py>(
+    py: Python<'py>,
+    target_starts: PyReadonlyArray1<'py, f64>,
+    target_ends: PyReadonlyArray1<'py, f64>,
+    data_starts: PyReadonlyArray1<'py, f64>,
+    data_ends: PyReadonlyArray1<'py, f64>,
+    values: PyReadonlyArray2<'py, f64>,
+    data_lengths: PyReadonlyArray1<'py, f64>,
+    original_indices: PyReadonlyArray1<'py, i64>,
+    target_lengths: PyReadonlyArray1<'py, f64>,
+    agg_types: PyReadonlyArray1<'py, i64>,
+    percentiles: PyReadonlyArray1<'py, f64>,
+) -> PyResult<Py<PyArray1<f64>>> {
+    let target_starts = target_starts.as_slice()?;
+    let target_ends = target_ends.as_slice()?;
+    let data_starts = data_starts.as_slice()?;
+    let data_ends = data_ends.as_slice()?;
+    let value_shape = values.shape().to_vec();
+    let values = values.as_slice()?;
+    let data_lengths = data_lengths.as_slice()?;
+    let original_indices = original_indices.as_slice()?;
+    let target_lengths = target_lengths.as_slice()?;
+    let agg_types = agg_types.as_slice()?;
+    let percentiles = percentiles.as_slice()?;
+
+    if target_starts.len() != target_ends.len()
+        || data_starts.len() != data_ends.len()
+        || target_starts.len() != target_lengths.len()
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "merge interval arrays must have matching lengths",
+        ));
+    }
+    if value_shape.len() != 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "values must be a two-dimensional array",
+        ));
+    }
+    let action_count = value_shape[0];
+    let data_count = value_shape[1];
+    if data_lengths.len() != data_count
+        || original_indices.len() != data_count
+        || agg_types.len() != action_count
+        || percentiles.len() != action_count
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "merge action arrays have inconsistent lengths",
+        ));
+    }
+
+    let (target_indices, data_indices, overlap_lengths) =
+        find_overlaps(target_starts, target_ends, data_starts, data_ends);
+    let n_targets = target_starts.len();
+    let mut offsets = vec![0usize; n_targets + 1];
+    for &target_index in &target_indices {
+        offsets[target_index as usize + 1] += 1;
+    }
+    for target in 0..n_targets {
+        offsets[target + 1] += offsets[target];
+    }
+    let mut grouped_data_indices = vec![0usize; data_indices.len()];
+    let mut grouped_overlaps = vec![0.0; overlap_lengths.len()];
+    let mut positions = offsets[..n_targets].to_vec();
+    for (position, (&target_index, &data_index)) in
+        target_indices.iter().zip(&data_indices).enumerate()
+    {
+        let target = target_index as usize;
+        let output_position = positions[target];
+        grouped_data_indices[output_position] = data_index as usize;
+        grouped_overlaps[output_position] = overlap_lengths[position];
+        positions[target] += 1;
+    }
+
+    let mut results = vec![f64::NAN; action_count * n_targets];
+    results
+        .par_chunks_mut(n_targets)
+        .enumerate()
+        .for_each(|(action, action_results)| {
+            let action_values = &values[action * data_count..(action + 1) * data_count];
+            for target in 0..n_targets {
+                let start = offsets[target];
+                let end = offsets[target + 1];
+                if start == end {
+                    continue;
+                }
+                let mut target_values = Vec::with_capacity(end - start);
+                let mut target_overlaps = Vec::with_capacity(end - start);
+                let mut target_data_lengths = Vec::with_capacity(end - start);
+                let mut target_original_indices = Vec::with_capacity(end - start);
+                for position in start..end {
+                    let data_index = grouped_data_indices[position];
+                    target_values.push(action_values[data_index]);
+                    target_overlaps.push(grouped_overlaps[position]);
+                    target_data_lengths.push(data_lengths[data_index]);
+                    target_original_indices.push(original_indices[data_index]);
+                }
+                action_results[target] = aggregate_target(
+                    &target_values,
+                    &target_overlaps,
+                    &target_data_lengths,
+                    &target_original_indices,
+                    target_lengths[target],
+                    agg_types[action],
+                    percentiles[action],
+                );
+            }
+        });
+
+    Ok(PyArray1::from_vec(py, results).unbind())
+}
+
+#[pyfunction]
 fn aggregate_keep_longest_categorical<'py>(
     py: Python<'py>,
     n_targets: usize,
@@ -1499,6 +1611,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(find_overlapping_intervals_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(aggregate_all_targets_numeric, m)?)?;
     m.add_function(wrap_pyfunction!(aggregate_all_targets_numeric_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_numeric_group, m)?)?;
     m.add_function(wrap_pyfunction!(aggregate_keep_longest_categorical, m)?)?;
     m.add_function(wrap_pyfunction!(linspace_steps_batch, m)?)?;
     m.add_function(wrap_pyfunction!(optimal_bisections_pq, m)?)?;
