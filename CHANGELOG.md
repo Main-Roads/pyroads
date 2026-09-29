@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 2026-09-29
+
+### Performance
+
+- Fused numeric interval overlap and aggregation in Rust.
+- Reused categorical factorization across merge groups.
+- Removed an extra native round trip from cross-section processing.
+- Fused homogeneous bisection and stretch row expansion in Rust.
+
 ## 0.6.0 - 2026-09-16
 
 ### Changed
