@@ -1,3 +1,4 @@
+import warnings
 from typing import Literal
 
 
@@ -18,5 +19,16 @@ def backend() -> Backend:
 __backend__: Backend = backend()
 
 
+_fallback_announced = False
+
+
 def announce_fallback() -> None:
-    print("Rust binaries were not found; defaulting to the Numba/Python fallback backend.")
+    global _fallback_announced
+    if _fallback_announced:
+        return
+    _fallback_announced = True
+    warnings.warn(
+        "Rust binaries were not found; defaulting to the Numba/Python fallback backend.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
