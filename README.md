@@ -68,10 +68,12 @@ The expected backend for a release wheel is `rust`.
 
 Installing directly from GitHub builds the Rust extension locally and therefore
 requires a compatible Rust toolchain with `cargo` and `rustc`, plus a Python
-build environment:
+build environment. Install a tagged release, or `main` for the latest
+unreleased changes:
 
 ```bash
-pip install git+https://github.com/Main-Roads/pyroads.git@release
+pip install git+https://github.com/Main-Roads/pyroads.git@v0.8.0
+pip install git+https://github.com/Main-Roads/pyroads.git@main
 ```
 
 The build frontend installs Maturin automatically. If the Rust extension cannot
@@ -416,8 +418,10 @@ wrote most of the functionality in the former `merge-segments`,
 `homogeneous-segmentation`, and `segmenter` packages.
 
 Dagmawi Tadesse consolidated these packages into the `pyroads` repository,
-preserving their public APIs for backward compatibility and delivering 
-performance improvements through NumPy and Numba JIT compilation.
+preserving their public APIs for backward compatibility, and delivered
+performance improvements through NumPy vectorisation, Numba JIT compilation,
+and a Rust extension (PyO3 and Rayon) that is now the default backend, with
+the Numba/Python implementations retained as a fallback.
 
 ## Disclaimer
 
