@@ -6,9 +6,10 @@
 
 - Interval merges now process every join group in one native call that
   releases the GIL and runs groups in parallel. On a 4,000-group benchmark
-  (200k target rows, 800k data rows) Polars inputs went from 17.0s to 0.27s
-  and pandas inputs from 2.5s to 0.25s; with a categorical `KeepLongest`
-  action, from 23.4s to 0.61s (Polars) and 8.7s to 0.51s (pandas).
+  (200k target rows, 800k data rows) Polars inputs went from 16.7s to 0.12s
+  and pandas inputs from 2.9s to 0.12s; with a categorical `KeepLongest`
+  action, from 22.7s to 0.17s (Polars) and 9.0s to 0.15s (pandas).
+- Polars string columns are factorized natively for `KeepLongest`.
 - Native kernels run serially on small inputs instead of waking the Rayon
   thread pool for every call.
 
