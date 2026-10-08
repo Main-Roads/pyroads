@@ -658,98 +658,6 @@ def _aggregate_all_targets_numeric(
     )
 
 
-def _aggregate_all_targets_numeric_batch(
-    n_targets: int,
-    tgt_indices: np.ndarray,
-    data_indices: np.ndarray,
-    overlap_lens: np.ndarray,
-    col_values: list[np.ndarray],
-    data_lengths: np.ndarray,
-    original_indices: np.ndarray,
-    target_lengths: np.ndarray,
-    agg_types: np.ndarray,
-    percentiles: np.ndarray,
-) -> np.ndarray:
-    """Aggregate all numeric actions for one group in one native call."""
-    if not col_values:
-        return np.empty((0, n_targets), dtype=np.float64)
-    values = np.ascontiguousarray(np.vstack(col_values), dtype=np.float64)
-    if _rust_native is not None:
-        flat = _rust_native.aggregate_all_targets_numeric_batch(
-            n_targets,
-            np.ascontiguousarray(tgt_indices, dtype=np.int64),
-            np.ascontiguousarray(data_indices, dtype=np.int64),
-            np.ascontiguousarray(overlap_lens, dtype=np.float64),
-            values,
-            np.ascontiguousarray(data_lengths, dtype=np.float64),
-            np.ascontiguousarray(original_indices, dtype=np.int64),
-            np.ascontiguousarray(target_lengths, dtype=np.float64),
-            np.ascontiguousarray(agg_types, dtype=np.int64),
-            np.ascontiguousarray(percentiles, dtype=np.float64),
-        )
-        return np.asarray(flat).reshape((len(col_values), n_targets))
-    return np.vstack([
-        _aggregate_all_targets_numeric(
-            n_targets,
-            tgt_indices,
-            data_indices,
-            overlap_lens,
-            values[action_index],
-            data_lengths,
-            original_indices,
-            target_lengths,
-            int(agg_types[action_index]),
-            float(percentiles[action_index]),
-        )
-        for action_index in range(len(col_values))
-    ])
-
-
-def _merge_numeric_group(
-    target_starts: np.ndarray,
-    target_ends: np.ndarray,
-    data_starts: np.ndarray,
-    data_ends: np.ndarray,
-    col_values: list[np.ndarray],
-    data_lengths: np.ndarray,
-    original_indices: np.ndarray,
-    target_lengths: np.ndarray,
-    agg_types: np.ndarray,
-    percentiles: np.ndarray,
-) -> np.ndarray:
-    """Run overlap detection and numeric aggregation in one native call."""
-    values = np.ascontiguousarray(np.vstack(col_values), dtype=np.float64)
-    if _rust_native is not None:
-        flat = _rust_native.merge_numeric_group(
-            np.ascontiguousarray(target_starts, dtype=np.float64),
-            np.ascontiguousarray(target_ends, dtype=np.float64),
-            np.ascontiguousarray(data_starts, dtype=np.float64),
-            np.ascontiguousarray(data_ends, dtype=np.float64),
-            values,
-            np.ascontiguousarray(data_lengths, dtype=np.float64),
-            np.ascontiguousarray(original_indices, dtype=np.int64),
-            np.ascontiguousarray(target_lengths, dtype=np.float64),
-            np.ascontiguousarray(agg_types, dtype=np.int64),
-            np.ascontiguousarray(percentiles, dtype=np.float64),
-        )
-        return np.asarray(flat).reshape((len(col_values), len(target_starts)))
-    tgt_idx, data_idx, overlap_lens = _find_overlapping_intervals_sorted(
-        target_starts, target_ends, data_starts, data_ends
-    )
-    return _aggregate_all_targets_numeric_batch(
-        n_targets=len(target_starts),
-        tgt_indices=tgt_idx,
-        data_indices=data_idx,
-        overlap_lens=overlap_lens,
-        col_values=col_values,
-        data_lengths=data_lengths,
-        original_indices=original_indices,
-        target_lengths=target_lengths,
-        agg_types=agg_types,
-        percentiles=percentiles,
-    )
-
-
 # =============================================================================
 # CATEGORICAL AGGREGATION (KeepLongest for non-numeric)
 # =============================================================================
@@ -834,32 +742,6 @@ def _aggregate_keep_longest_categorical(
 
         results[t] = best_value
 
-    return results
-
-
-def _aggregate_keep_longest_categorical_codes(
-    n_targets: int,
-    tgt_indices: np.ndarray,
-    data_indices: np.ndarray,
-    overlap_lens: np.ndarray,
-    codes: np.ndarray,
-    uniques: np.ndarray,
-) -> np.ndarray:
-    """Aggregate pre-factorized categorical values and restore their labels."""
-    if _rust_native is None:
-        raise RuntimeError("native categorical aggregation is unavailable")
-    result_codes = _rust_native.aggregate_keep_longest_categorical(
-        n_targets,
-        np.ascontiguousarray(tgt_indices, dtype=np.int64),
-        np.ascontiguousarray(data_indices, dtype=np.int64),
-        np.ascontiguousarray(overlap_lens, dtype=np.float64),
-        np.ascontiguousarray(codes, dtype=np.int64),
-    )
-    result_codes = np.asarray(result_codes)
-    results = np.empty(n_targets, dtype=object)
-    results[:] = None
-    valid = result_codes >= 0
-    results[valid] = np.asarray(uniques, dtype=object)[result_codes[valid]]
     return results
 
 
@@ -955,243 +837,46 @@ def on_slk_intervals_numba(
                 continue
         numeric_actions.append(action)
 
-    # Initialize output columns with appropriate dtypes
-    output_data: Dict[str, np.ndarray] = {}
-    output_dtypes: Dict[str, str] = {}  # Track dtype for each output column
-    for action in column_actions:
-        # KeepLongest on non-numeric columns needs object dtype
-        if action.aggregation.type.value == AGG_KEEP_LONGEST:
-            if not _is_numeric_column(data[action.column_name]):
-                output_data[action.rename] = np.full(len(target), None, dtype=object)
-                output_dtypes[action.rename] = "object"
-                continue
-        # All other cases use float64
-        output_data[action.rename] = np.full(len(target), np.nan, dtype=np.float64)
-        output_dtypes[action.rename] = "float64"
+    from . import _grouped
 
-    categorical_metadata: Dict[str, Tuple[str, np.ndarray, np.ndarray]] = {}
-    categorical_code_columns: list[str] = []
-    categorical_column_names = {
-        action.column_name for action in categorical_actions
-    }
-    for column_name in dict.fromkeys(
-        action.column_name
-        for action in column_actions
-        if action.column_name in categorical_column_names
-    ):
-        try:
-            codes, uniques = pd.factorize(
-                data[column_name], sort=False, use_na_sentinel=True
-            )
-        except (TypeError, ValueError):
-            continue
-        code_column = f"__pyroads_category_code_{len(categorical_code_columns)}"
-        categorical_metadata[column_name] = (
-            code_column,
-            np.asarray(uniques, dtype=object),
-            np.asarray(codes, dtype=np.int64),
-        )
-        categorical_code_columns.append(code_column)
-
-    # Pre-extract needed columns from data
-    data_needed_cols = list({action.column_name for action in column_actions})
-    data_subset = data[
-        [*join_left, slk_from, slk_to, *data_needed_cols]
-    ].copy()
-    for column_name, (code_column, _, codes) in categorical_metadata.items():
-        data_subset[code_column] = codes
-    data_subset["_original_index"] = data.index
-    data_subset["_segment_len"] = data_subset[slk_to] - data_subset[slk_from]
-
-    # Build data groups
-    data_groups: Dict[tuple, pd.DataFrame] = {}
-    for key, group in data_subset.groupby(join_left, sort=False):
-        key_tuple = key if isinstance(key, tuple) else (key,)
-        data_groups[key_tuple] = group.reset_index(drop=True)  # pyright: ignore[reportArgumentType]
-
-    # Group target
-    target_groups = target.groupby(join_left, sort=False)
-    total_groups = target_groups.ngroups
-
+    target_ids, data_ids = _grouped.pandas_group_ids(target, data, join_left)
+    total_groups = int(np.count_nonzero(np.bincount(target_ids[target_ids >= 0])))
     if verbose:
         print(
             f"[pyroads.merge] Numba sparse merge: {len(column_actions)} action(s), "
             f"{total_groups} group(s), {len(target)} target rows, {len(data)} data rows"
         )
 
-    processed_groups = 0
+    factorized = {
+        column_name: _grouped.factorize(data[column_name])
+        for column_name in dict.fromkeys(action.column_name for action in categorical_actions)
+    }
+    agg_codes = [_get_agg_type_code(action.aggregation) for action in numeric_actions]
+    numeric_results, categorical_results = _grouped.merge_groups(
+        target_ids,
+        target[slk_from].to_numpy(dtype=np.float64),
+        target[slk_to].to_numpy(dtype=np.float64),
+        data_ids,
+        data[slk_from].to_numpy(dtype=np.float64),
+        data[slk_to].to_numpy(dtype=np.float64),
+        data.index.to_numpy(dtype=np.int64),
+        numeric_values=[
+            data[action.column_name].to_numpy(dtype=np.float64) for action in numeric_actions
+        ],
+        agg_types=[agg_type for agg_type, _ in agg_codes],
+        percentiles=[percentile for _, percentile in agg_codes],
+        category_codes=[factorized[action.column_name][0] for action in categorical_actions],
+    )
 
-    rust_group_overlaps = None
-    if _rust_native is not None and categorical_actions:
-        rust_inputs = []
-        rust_keys = []
-        for key, target_group in target_groups:
-            key_tuple = key if isinstance(key, tuple) else (key,)
-            data_group = data_groups.get(key_tuple)
-            if data_group is None or len(data_group) == 0:
-                continue
-            rust_keys.append(key_tuple)
-            rust_inputs.append(
-                (
-                    target_group[slk_from].to_numpy(dtype=np.float64),
-                    target_group[slk_to].to_numpy(dtype=np.float64),
-                    data_group[slk_from].to_numpy(dtype=np.float64),
-                    data_group[slk_to].to_numpy(dtype=np.float64),
-                )
-            )
-        rust_results = _rust_native.find_overlapping_intervals_parallel(rust_inputs)
-        rust_group_overlaps = dict(zip(rust_keys, rust_results))
+    output_data: Dict[str, np.ndarray] = {}
+    for action, values in zip(numeric_actions, numeric_results):
+        output_data[action.rename] = values
+    for action, codes in zip(categorical_actions, categorical_results):
+        output_data[action.rename] = _grouped.decode(codes, factorized[action.column_name][1])
 
-    # Process each group
-    for key, target_group in target_groups:
-        key_tuple = key if isinstance(key, tuple) else (key,)
-        data_group = data_groups.get(key_tuple)
-
-        if data_group is None or len(data_group) == 0:
-            processed_groups += 1
-            continue
-
-        # Extract numpy arrays
-        tgt_starts = target_group[slk_from].to_numpy(dtype=np.float64)
-        tgt_ends = target_group[slk_to].to_numpy(dtype=np.float64)
-        tgt_lengths = tgt_ends - tgt_starts
-
-        data_starts = data_group[slk_from].to_numpy(dtype=np.float64)
-        data_ends = data_group[slk_to].to_numpy(dtype=np.float64)
-        data_lengths = data_group["_segment_len"].to_numpy(dtype=np.float64)
-        original_indices = data_group["_original_index"].to_numpy(dtype=np.int64)
-
-        target_iloc_positions = [
-            target.index.get_loc(idx) for idx in target_group.index
-        ]
-
-        if _rust_native is not None and not categorical_actions and numeric_actions:
-            numeric_values = [
-                data_group[action.column_name].to_numpy(dtype=np.float64)
-                for action in numeric_actions
-            ]
-            numeric_agg_types = []
-            numeric_percentiles = []
-            for action in numeric_actions:
-                agg_type, percentile = _get_agg_type_code(action.aggregation)
-                numeric_agg_types.append(agg_type)
-                numeric_percentiles.append(percentile)
-            numeric_results = _merge_numeric_group(
-                target_starts=tgt_starts,
-                target_ends=tgt_ends,
-                data_starts=data_starts,
-                data_ends=data_ends,
-                col_values=numeric_values,
-                data_lengths=data_lengths,
-                original_indices=original_indices,
-                target_lengths=tgt_lengths,
-                agg_types=np.asarray(numeric_agg_types, dtype=np.int64),
-                percentiles=np.asarray(numeric_percentiles, dtype=np.float64),
-            )
-            for action_index, action in enumerate(numeric_actions):
-                for local_idx, global_pos in enumerate(target_iloc_positions):
-                    output_data[action.rename][global_pos] = numeric_results[
-                        action_index, local_idx
-                    ]
-            processed_groups += 1
-            if verbose and processed_groups % 100 == 0:
-                print(f"  Processed {processed_groups}/{total_groups} groups...")
-            continue
-
-        # Find sparse overlaps for mixed/categorical groups. Numeric-only groups
-        # use the fused native path below and never materialize these arrays.
-        if rust_group_overlaps is not None and key_tuple in rust_group_overlaps:
-            tgt_idx, data_idx, overlap_lens = rust_group_overlaps[key_tuple]
-        else:
-            tgt_idx, data_idx, overlap_lens = _find_overlapping_intervals_sorted(
-                tgt_starts, tgt_ends, data_starts, data_ends
-            )
-
-        if len(tgt_idx) == 0:
-            processed_groups += 1
-            continue
-
-        # Map local target indices to global target indices
-        # Process all numeric columns in one native/Numba batch per group.
-        if numeric_actions:
-            numeric_values = [
-                data_group[action.column_name].to_numpy(dtype=np.float64)
-                for action in numeric_actions
-            ]
-            numeric_agg_types = []
-            numeric_percentiles = []
-            for action in numeric_actions:
-                agg_type, percentile = _get_agg_type_code(action.aggregation)
-                numeric_agg_types.append(agg_type)
-                numeric_percentiles.append(percentile)
-            numeric_agg_types_array = np.asarray(numeric_agg_types, dtype=np.int64)
-            numeric_percentiles_array = np.asarray(numeric_percentiles, dtype=np.float64)
-            if _rust_native is not None and not categorical_actions:
-                numeric_results = _merge_numeric_group(
-                    target_starts=tgt_starts,
-                    target_ends=tgt_ends,
-                    data_starts=data_starts,
-                    data_ends=data_ends,
-                    col_values=numeric_values,
-                    data_lengths=data_lengths,
-                    original_indices=original_indices,
-                    target_lengths=tgt_lengths,
-                    agg_types=numeric_agg_types_array,
-                    percentiles=numeric_percentiles_array,
-                )
-            else:
-                numeric_results = _aggregate_all_targets_numeric_batch(
-                    n_targets=len(target_group),
-                    tgt_indices=tgt_idx,
-                    data_indices=data_idx,
-                    overlap_lens=overlap_lens,
-                    col_values=numeric_values,
-                    data_lengths=data_lengths,
-                    original_indices=original_indices,
-                    target_lengths=tgt_lengths,
-                    agg_types=numeric_agg_types_array,
-                    percentiles=numeric_percentiles_array,
-                )
-
-            for action_index, action in enumerate(numeric_actions):
-                for local_idx, global_pos in enumerate(target_iloc_positions):
-                    output_data[action.rename][global_pos] = numeric_results[action_index, local_idx]
-
-        # Process categorical columns in Python
-        for action in categorical_actions:
-            metadata = categorical_metadata.get(action.column_name)
-            if metadata is not None and _rust_native is not None:
-                code_column, uniques, _ = metadata
-                agg_results = _aggregate_keep_longest_categorical_codes(
-                    n_targets=len(target_group),
-                    tgt_indices=tgt_idx,
-                    data_indices=data_idx,
-                    overlap_lens=overlap_lens,
-                    codes=data_group[code_column].to_numpy(dtype=np.int64),
-                    uniques=uniques,
-                )
-            else:
-                col_values = data_group[action.column_name].to_numpy(dtype=object)
-                agg_results = _aggregate_keep_longest_categorical(
-                    n_targets=len(target_group),
-                    tgt_indices=tgt_idx,
-                    data_indices=data_idx,
-                    overlap_lens=overlap_lens,
-                    col_values=col_values,
-                )
-
-            for local_idx, global_pos in enumerate(target_iloc_positions):
-                output_data[action.rename][global_pos] = agg_results[local_idx]
-
-        processed_groups += 1
-        if verbose and processed_groups % 100 == 0:
-            print(f"  Processed {processed_groups}/{total_groups} groups...")
-
-    # Build result DataFrame
     result = target.copy()
-    for col_name, col_values in output_data.items():
-        # Convert back to appropriate dtype
-        result[col_name] = pd.Series(col_values, index=target.index)
+    for action in column_actions:
+        result[action.rename] = pd.Series(output_data[action.rename], index=target.index)
 
     elapsed = time.perf_counter() - start_time
 
@@ -1209,7 +894,6 @@ def on_slk_intervals_numba(
                 groups=float(total_groups),
                 actions=float(len(column_actions)),
                 rows=float(len(target)),
-                overlaps=float(len(tgt_idx) if "tgt_idx" in dir() else 0),
             )
     except Exception:
         pass  # Performance logging is optional
