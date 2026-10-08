@@ -23,6 +23,58 @@ const AGG_MAX: i64 = 13;
 const AGG_KEEP_LONGEST_SEGMENT: i64 = 1;
 const AGG_KEEP_LONGEST: i64 = 2;
 
+// Below these sizes, waking the Rayon pool costs more than the work itself.
+const PARALLEL_MIN_ITEMS: usize = 4_096;
+const PARALLEL_MIN_ELEMENTS: usize = 65_536;
+
+fn collect_indexed<T, F>(count: usize, parallel: bool, f: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(usize) -> T + Sync + Send,
+{
+    if parallel {
+        (0..count).into_par_iter().map(f).collect()
+    } else {
+        (0..count).map(f).collect()
+    }
+}
+
+fn for_each_indexed_mut<T, F>(items: &mut [T], parallel: bool, f: F)
+where
+    T: Send,
+    F: Fn(usize, &mut T) + Sync + Send,
+{
+    if parallel {
+        items
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(index, item)| f(index, item));
+    } else {
+        items
+            .iter_mut()
+            .enumerate()
+            .for_each(|(index, item)| f(index, item));
+    }
+}
+
+fn for_each_chunk_mut<T, F>(items: &mut [T], chunk_size: usize, parallel: bool, f: F)
+where
+    T: Send,
+    F: Fn(usize, &mut [T]) + Sync + Send,
+{
+    if parallel {
+        items
+            .par_chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(index, chunk)| f(index, chunk));
+    } else {
+        items
+            .chunks_mut(chunk_size)
+            .enumerate()
+            .for_each(|(index, chunk)| f(index, chunk));
+    }
+}
+
 fn weighted_percentile(values: &[f64], weights: &[f64], percentile: f64) -> f64 {
     let mut pairs: Vec<(f64, f64)> = values
         .iter()
@@ -266,24 +318,20 @@ fn cumulative_p<'py>(
         right_sum[index] = sum;
         right_square_sum[index] = square_sum;
     }
-    let result: Vec<f64> = (0..n)
-        .into_par_iter()
-        .map(|index| {
-            let left_n = (index + 1) as f64;
-            let right_n = (n - index) as f64;
-            let left = ((left_n * left_square_sum[index] / (left_sum[index] * left_sum[index])
-                - 1.0)
-                * left_n
-                / (left_n - 1.0))
+    let result: Vec<f64> = collect_indexed(n, n >= PARALLEL_MIN_ELEMENTS, |index| {
+        let left_n = (index + 1) as f64;
+        let right_n = (n - index) as f64;
+        let left = ((left_n * left_square_sum[index] / (left_sum[index] * left_sum[index]) - 1.0)
+            * left_n
+            / (left_n - 1.0))
+            .sqrt();
+        let right =
+            ((right_n * right_square_sum[index] / (right_sum[index] * right_sum[index]) - 1.0)
+                * right_n
+                / (right_n - 1.0))
                 .sqrt();
-            let right =
-                ((right_n * right_square_sum[index] / (right_sum[index] * right_sum[index]) - 1.0)
-                    * right_n
-                    / (right_n - 1.0))
-                    .sqrt();
-            (left + right) / 2.0
-        })
-        .collect();
+        (left + right) / 2.0
+    });
     Ok(PyArray1::from_vec(py, result).unbind())
 }
 
@@ -321,16 +369,13 @@ fn cumulative_q<'py>(
     let total_sum: f64 = data.iter().sum();
     let total_square_sum: f64 = data.iter().map(|value| value * value).sum();
     let denominator = total_square_sum - total_sum * total_sum / data.len() as f64;
-    let result: Vec<f64> = (0..n)
-        .into_par_iter()
-        .map(|index| {
-            let left_n = (index + 1) as f64;
-            let right_n = (n - index) as f64;
-            1.0 - ((left_square_sum[index] - left_sum[index] * left_sum[index] / left_n)
-                + (right_square_sum[index] - right_sum[index] * right_sum[index] / right_n))
-                / denominator
-        })
-        .collect();
+    let result: Vec<f64> = collect_indexed(n, n >= PARALLEL_MIN_ELEMENTS, |index| {
+        let left_n = (index + 1) as f64;
+        let right_n = (n - index) as f64;
+        1.0 - ((left_square_sum[index] - left_sum[index] * left_sum[index] / left_n)
+            + (right_square_sum[index] - right_sum[index] * right_sum[index] / right_n))
+            / denominator
+    });
     Ok(PyArray1::from_vec(py, result).unbind())
 }
 
@@ -919,10 +964,10 @@ fn aggregate_all_targets_numeric<'py>(
     }
 
     let mut results = vec![f64::NAN; n_targets];
-    results
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(target, result)| {
+    for_each_indexed_mut(
+        &mut results,
+        n_targets >= PARALLEL_MIN_ITEMS,
+        |target, result| {
             let start = offsets[target];
             let end = offsets[target + 1];
             if start == end {
@@ -948,7 +993,8 @@ fn aggregate_all_targets_numeric<'py>(
                 agg_type,
                 percentile,
             );
-        });
+        },
+    );
 
     Ok(PyArray1::from_vec(py, results).unbind())
 }
@@ -1035,10 +1081,11 @@ fn aggregate_all_targets_numeric_batch<'py>(
 
     let mut results = vec![f64::NAN; action_count * n_targets];
     if n_targets > 0 {
-        results
-            .par_chunks_mut(n_targets)
-            .enumerate()
-            .for_each(|(action, action_results)| {
+        for_each_chunk_mut(
+            &mut results,
+            n_targets,
+            action_count > 1 && n_targets >= PARALLEL_MIN_ITEMS,
+            |action, action_results| {
                 let action_values = &values[action * data_count..(action + 1) * data_count];
                 for target in 0..n_targets {
                     let start = offsets[target];
@@ -1067,7 +1114,8 @@ fn aggregate_all_targets_numeric_batch<'py>(
                         percentiles[action],
                     );
                 }
-            });
+            },
+        );
     }
 
     Ok(PyArray1::from_vec(py, results).unbind())
@@ -1148,39 +1196,43 @@ fn merge_numeric_group<'py>(
     }
 
     let mut results = vec![f64::NAN; action_count * n_targets];
-    results
-        .par_chunks_mut(n_targets)
-        .enumerate()
-        .for_each(|(action, action_results)| {
-            let action_values = &values[action * data_count..(action + 1) * data_count];
-            for target in 0..n_targets {
-                let start = offsets[target];
-                let end = offsets[target + 1];
-                if start == end {
-                    continue;
+    if n_targets > 0 {
+        for_each_chunk_mut(
+            &mut results,
+            n_targets,
+            action_count > 1 && n_targets >= PARALLEL_MIN_ITEMS,
+            |action, action_results| {
+                let action_values = &values[action * data_count..(action + 1) * data_count];
+                for target in 0..n_targets {
+                    let start = offsets[target];
+                    let end = offsets[target + 1];
+                    if start == end {
+                        continue;
+                    }
+                    let mut target_values = Vec::with_capacity(end - start);
+                    let mut target_overlaps = Vec::with_capacity(end - start);
+                    let mut target_data_lengths = Vec::with_capacity(end - start);
+                    let mut target_original_indices = Vec::with_capacity(end - start);
+                    for position in start..end {
+                        let data_index = grouped_data_indices[position];
+                        target_values.push(action_values[data_index]);
+                        target_overlaps.push(grouped_overlaps[position]);
+                        target_data_lengths.push(data_lengths[data_index]);
+                        target_original_indices.push(original_indices[data_index]);
+                    }
+                    action_results[target] = aggregate_target(
+                        &target_values,
+                        &target_overlaps,
+                        &target_data_lengths,
+                        &target_original_indices,
+                        target_lengths[target],
+                        agg_types[action],
+                        percentiles[action],
+                    );
                 }
-                let mut target_values = Vec::with_capacity(end - start);
-                let mut target_overlaps = Vec::with_capacity(end - start);
-                let mut target_data_lengths = Vec::with_capacity(end - start);
-                let mut target_original_indices = Vec::with_capacity(end - start);
-                for position in start..end {
-                    let data_index = grouped_data_indices[position];
-                    target_values.push(action_values[data_index]);
-                    target_overlaps.push(grouped_overlaps[position]);
-                    target_data_lengths.push(data_lengths[data_index]);
-                    target_original_indices.push(original_indices[data_index]);
-                }
-                action_results[target] = aggregate_target(
-                    &target_values,
-                    &target_overlaps,
-                    &target_data_lengths,
-                    &target_original_indices,
-                    target_lengths[target],
-                    agg_types[action],
-                    percentiles[action],
-                );
-            }
-        });
+            },
+        );
+    }
 
     Ok(PyArray1::from_vec(py, results).unbind())
 }
@@ -1235,42 +1287,46 @@ fn aggregate_keep_longest_categorical<'py>(
     }
 
     let mut results = vec![-1_i64; n_targets];
-    if n_targets > 0 {
-        results
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(target, result)| {
-                let start = offsets[target];
-                let end = offsets[target + 1];
-                let mut totals: Vec<(i64, f64, usize)> = Vec::new();
-                for position in start..end {
-                    let code = codes[grouped_data_indices[position]];
-                    if code < 0 {
-                        continue;
-                    }
-                    if let Some((_, total, _)) =
-                        totals.iter_mut().find(|(value, _, _)| *value == code)
-                    {
-                        *total += grouped_overlaps[position];
-                    } else {
-                        totals.push((code, grouped_overlaps[position], position - start));
-                    }
-                }
-                let mut best_code = -1_i64;
-                let mut best_total = -1.0;
-                let mut best_order = usize::MAX;
-                for (code, total, order) in totals {
-                    let tied = (total - best_total).abs() <= 1e-8 + 1e-5 * best_total.abs();
-                    if total > best_total || (tied && order < best_order) {
-                        best_code = code;
-                        best_total = total;
-                        best_order = order;
-                    }
-                }
-                *result = best_code;
-            });
-    }
+    for_each_indexed_mut(
+        &mut results,
+        n_targets >= PARALLEL_MIN_ITEMS,
+        |target, result| {
+            let start = offsets[target];
+            let end = offsets[target + 1];
+            *result = keep_longest_code(
+                (start..end)
+                    .map(|position| (codes[grouped_data_indices[position]], grouped_overlaps[position])),
+            );
+        },
+    );
     Ok(PyArray1::from_vec(py, results).unbind())
+}
+
+/// Return the code with the largest total overlap; ties go to the first seen.
+fn keep_longest_code(pairs: impl Iterator<Item = (i64, f64)>) -> i64 {
+    let mut totals: Vec<(i64, f64, usize)> = Vec::new();
+    for (order, (code, overlap)) in pairs.enumerate() {
+        if code < 0 {
+            continue;
+        }
+        if let Some((_, total, _)) = totals.iter_mut().find(|(value, _, _)| *value == code) {
+            *total += overlap;
+        } else {
+            totals.push((code, overlap, order));
+        }
+    }
+    let mut best_code = -1_i64;
+    let mut best_total = -1.0;
+    let mut best_order = usize::MAX;
+    for (code, total, order) in totals {
+        let tied = (total - best_total).abs() <= 1e-8 + 1e-5 * best_total.abs();
+        if total > best_total || (tied && order < best_order) {
+            best_code = code;
+            best_total = total;
+            best_order = order;
+        }
+    }
+    best_code
 }
 
 fn linspace_steps_impl(
@@ -1330,17 +1386,14 @@ fn linspace_steps_batch<'py>(
             "linspace batch arrays must have matching lengths",
         ));
     }
-    let rows: Vec<Vec<f64>> = (0..count)
-        .into_par_iter()
-        .map(|index| {
-            linspace_steps_impl(
-                measure_from[index],
-                measure_to[index],
-                multiples[index],
-                minimum_lengths[index],
-            )
-        })
-        .collect();
+    let rows: Vec<Vec<f64>> = collect_indexed(count, count >= PARALLEL_MIN_ITEMS, |index| {
+        linspace_steps_impl(
+            measure_from[index],
+            measure_to[index],
+            multiples[index],
+            minimum_lengths[index],
+        )
+    });
     let mut values = Vec::new();
     let mut offsets = Vec::with_capacity(count + 1);
     offsets.push(0_i64);
@@ -1368,19 +1421,17 @@ fn fixed_segment_boundaries_batch<'py>(
             "fixed segment arrays must match and segment_length must be positive",
         ));
     }
-    let rows: Vec<Vec<f64>> = (0..measure_from.len())
-        .into_par_iter()
-        .map(|index| {
-            let start = measure_from[index];
-            let end = measure_to[index];
-            let count = ((end - start) / segment_length).ceil().max(0.0) as usize;
-            let mut boundaries: Vec<f64> = (0..count)
-                .map(|part| start + part as f64 * segment_length)
-                .collect();
-            boundaries.push(end);
-            boundaries
-        })
-        .collect();
+    let row_count = measure_from.len();
+    let rows: Vec<Vec<f64>> = collect_indexed(row_count, row_count >= PARALLEL_MIN_ITEMS, |index| {
+        let start = measure_from[index];
+        let end = measure_to[index];
+        let count = ((end - start) / segment_length).ceil().max(0.0) as usize;
+        let mut boundaries: Vec<f64> = (0..count)
+            .map(|part| start + part as f64 * segment_length)
+            .collect();
+        boundaries.push(end);
+        boundaries
+    });
     let mut values = Vec::new();
     let mut offsets = Vec::with_capacity(rows.len() + 1);
     offsets.push(0_i64);
@@ -1408,15 +1459,13 @@ fn fixed_segment_rows<'py>(
             "fixed segment arrays must match and segment_length must be positive",
         ));
     }
-    let rows: Vec<Vec<i64>> = (0..measure_from.len())
-        .into_par_iter()
-        .map(|index| {
-            let count = ((measure_to[index] - measure_from[index]) / segment_length)
-                .ceil()
-                .max(0.0) as usize;
-            (0..count).map(|part| part as i64).collect()
-        })
-        .collect();
+    let row_count = measure_from.len();
+    let rows: Vec<Vec<i64>> = collect_indexed(row_count, row_count >= PARALLEL_MIN_ITEMS, |index| {
+        let count = ((measure_to[index] - measure_from[index]) / segment_length)
+            .ceil()
+            .max(0.0) as usize;
+        (0..count).map(|part| part as i64).collect()
+    });
     let mut source_indices = Vec::new();
     let mut part_indices = Vec::new();
     for (source, parts) in rows.into_iter().enumerate() {
@@ -1492,6 +1541,24 @@ fn cumulative_statistic(data: &[f64], q_statistic: bool) -> Vec<f64> {
     }
 }
 
+fn cumulative_statistics(
+    variables: &[f64],
+    n_variables: usize,
+    n_values: usize,
+    q_statistic: bool,
+) -> Vec<Vec<f64>> {
+    collect_indexed(
+        n_variables,
+        n_variables > 1 && n_variables * n_values >= PARALLEL_MIN_ELEMENTS,
+        |variable| {
+            cumulative_statistic(
+                &variables[variable * n_values..(variable + 1) * n_values],
+                q_statistic,
+            )
+        },
+    )
+}
+
 #[pyfunction]
 fn optimal_bisections_pq<'py>(
     py: Python<'py>,
@@ -1518,15 +1585,7 @@ fn optimal_bisections_pq<'py>(
     if k.is_empty() {
         return Ok(PyArray1::from_vec(py, Vec::new()).unbind());
     }
-    let statistics: Vec<Vec<f64>> = (0..n_variables)
-        .into_par_iter()
-        .map(|variable| {
-            cumulative_statistic(
-                &variables[variable * n_values..(variable + 1) * n_values],
-                statistic == 1,
-            )
-        })
-        .collect();
+    let statistics = cumulative_statistics(variables, n_variables, n_values, statistic == 1);
     let mut objective = Vec::with_capacity(k.len().saturating_sub(1));
     for &index in k.iter().filter(|&&index| index > 0) {
         let mut total = 0.0;
@@ -1609,15 +1668,7 @@ fn optimal_bisections_pq_full<'py>(
         return Ok(PyArray1::from_vec(py, Vec::new()).unbind());
     }
 
-    let statistics: Vec<Vec<f64>> = (0..n_variables)
-        .into_par_iter()
-        .map(|variable| {
-            cumulative_statistic(
-                &variables[variable * n_values..(variable + 1) * n_values],
-                statistic == 1,
-            )
-        })
-        .collect();
+    let statistics = cumulative_statistics(variables, n_variables, n_values, statistic == 1);
     let mut objective = Vec::with_capacity(k.len().saturating_sub(1));
     for &index in k.iter().filter(|&&index| index > 0) {
         let mut sum = 0.0;
