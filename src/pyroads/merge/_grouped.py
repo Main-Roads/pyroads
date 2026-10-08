@@ -60,6 +60,19 @@ def factorize(values: Any) -> Tuple[np.ndarray, np.ndarray]:
     return codes.astype(np.int64, copy=False), np.asarray(uniques, dtype=object)
 
 
+def polars_factorize(series: Any) -> Tuple[np.ndarray, np.ndarray]:
+    """Polars equivalent of :func:`factorize`."""
+    import polars as pl
+
+    if series.dtype != pl.String:
+        return factorize(series.to_list())
+    uniques = series.drop_nulls().unique(maintain_order=True)
+    codes = series.replace_strict(
+        uniques, np.arange(len(uniques)), default=-1, return_dtype=pl.Int64
+    ).to_numpy()
+    return codes.astype(np.int64, copy=False), np.asarray(uniques.to_list(), dtype=object)
+
+
 def decode(codes: np.ndarray, uniques: np.ndarray) -> np.ndarray:
     """Map codes back to their values, with ``None`` for -1."""
     result = np.full(len(codes), None, dtype=object)

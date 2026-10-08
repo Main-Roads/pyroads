@@ -260,7 +260,7 @@ def on_slk_intervals_polars(
         return data_df[column].to_numpy().astype(np.float64, copy=False)
 
     factorized = {
-        column_name: _grouped.factorize(data_df[column_name].to_list())
+        column_name: _grouped.polars_factorize(data_df[column_name])
         for column_name in dict.fromkeys(action.column_name for action in categorical_actions)
     }
     agg_codes = [_get_agg_type_code(action.aggregation) for action in numeric_actions]
