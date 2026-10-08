@@ -52,6 +52,10 @@ def polars_group_ids(target: Any, data: Any, join_left: List[str]) -> Tuple[np.n
 
 def factorize(values: Any) -> Tuple[np.ndarray, np.ndarray]:
     """Return int64 codes (-1 for missing) and the matching unique values."""
+    if isinstance(values, list):
+        array = np.empty(len(values), dtype=object)
+        array[:] = values
+        values = array
     codes, uniques = pd.factorize(values, sort=False, use_na_sentinel=True)
     return codes.astype(np.int64, copy=False), np.asarray(uniques, dtype=object)
 

@@ -1,21 +1,16 @@
 """Polars-backed interval merge implementation.
 
-This module reuses the Numba sparse-overlap kernels from :mod:`_numba_merge`
-so that numeric aggregation results are identical to the pandas/Numba path.
-Only the DataFrame-shaped glue (grouping, column extraction, result assembly)
-is Polars-native. Groups are independent of one another, so they are
-processed concurrently via a thread pool; the core Numba kernels are compiled
-with ``nogil=True`` so this achieves genuine multi-core parallelism instead of
-serializing on the GIL.
+Validation and dataframe glue are Polars-native. Group ids are computed in
+Polars, and the merge itself runs through the same grouped native kernel as
+the pandas backend (see :mod:`._grouped`), so both backends return identical
+results. The kernel releases the GIL and parallelises across groups with Rayon.
 
 Requires: polars, numba (numba is already a core dependency of the package).
 """
 
 from __future__ import annotations
 
-import os
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -28,14 +23,7 @@ from .exceptions import (
     OutputCollisionError,
     ZeroLengthSegmentError,
 )
-from ._numba_merge import (
-    AGG_KEEP_LONGEST,
-    NUMBA_AVAILABLE,
-    _aggregate_all_targets_numeric,
-    _aggregate_keep_longest_categorical,
-    _find_overlapping_intervals_sorted,
-    _get_agg_type_code,
-)
+from ._numba_merge import AGG_KEEP_LONGEST, NUMBA_AVAILABLE, _get_agg_type_code
 
 if TYPE_CHECKING:
     import polars as pl
@@ -66,23 +54,10 @@ _NUMERIC_ONLY_AGGREGATIONS = frozenset(
     }
 )
 
-_ROW_IDX_COL = "__pyroads.merge_target_row_idx__"
-_DATA_IDX_COL = "__pyroads.merge_data_row_idx__"
-_SEGMENT_LEN_COL = "__pyroads.merge_segment_len__"
-
 
 def is_polars_available() -> bool:
     """Check if Polars is available for the Polars-native merge backend."""
     return POLARS_AVAILABLE
-
-
-def _normalize_group_key(key: Any) -> tuple:
-    """Return a deterministic tuple key for a Polars ``partition_by`` group."""
-    if isinstance(key, tuple):
-        return key
-    if isinstance(key, list):
-        return tuple(key)
-    return (key,)
 
 
 def _is_numeric_dtype(dtype: Any) -> bool:
@@ -220,25 +195,24 @@ def on_slk_intervals_polars(
     verbose: bool = False,
     n_jobs: Optional[int] = None,
 ) -> pl.DataFrame:
-    """Merge and aggregate interval data using a Polars-native, multithreaded path.
+    """Merge and aggregate interval data from Polars DataFrames.
 
-    This is a drop-in Polars equivalent of :func:`on_slk_intervals_numba`. It
-    partitions ``target`` and ``data`` by ``join_left`` using Polars, then
-    processes each independent group concurrently in a thread pool. The
-    numeric aggregation for each group calls the same Numba kernels used by
-    the pandas/Numba backend, guaranteeing identical results.
+    This is a drop-in Polars equivalent of :func:`on_slk_intervals_numba` and
+    returns identical results. All join groups are merged in one native call
+    that releases the GIL and runs groups in parallel.
 
     Args:
         target: Polars DataFrame containing the segments to populate.
         data: Polars DataFrame providing the measurements to aggregate.
-        join_left: Ordered list of column names defining grouping keys.
+        join_left: Ordered list of column names defining grouping keys. Rows
+            with a missing key are not matched, as in the pandas backend.
         column_actions: Sequence of :class:`Action` instances describing
             aggregations.
         from_to: Tuple of (start column, end column) names describing each
             interval (half-open, start inclusive, end exclusive).
         verbose: If True, prints diagnostic timing information.
-        n_jobs: Number of worker threads to use. Defaults to the number of
-            available CPUs (capped at 32).
+        n_jobs: Number of native worker threads. Defaults to the global Rayon
+            pool, sized by ``RAYON_NUM_THREADS`` or the number of CPUs.
 
     Returns:
         A new Polars DataFrame with the same rows as ``target`` plus one
@@ -249,6 +223,10 @@ def on_slk_intervals_polars(
             "Numba is required for on_slk_intervals_polars. "
             "Install with: pip install pyroads"
         )
+    if n_jobs is not None and n_jobs < 1:
+        raise ValueError("`n_jobs` must be a positive integer.")
+
+    from . import _grouped
 
     start_time = time.perf_counter()
     slk_from, slk_to = from_to
@@ -257,141 +235,59 @@ def on_slk_intervals_polars(
         target, data, join_left, column_actions, from_to
     )
 
-    n_target = target_df.height
-
-    target_indexed = target_df.with_row_index(_ROW_IDX_COL)
-
-    data_needed_cols = list({action.column_name for action in column_actions})
-    data_subset = data_df.select([*join_left, slk_from, slk_to, *data_needed_cols])
-    data_subset = data_subset.with_row_index(_DATA_IDX_COL)
-    data_subset = data_subset.with_columns(
-        (pl.col(slk_to) - pl.col(slk_from)).alias(_SEGMENT_LEN_COL)
-    )
-
-    target_groups = target_indexed.partition_by(
-        join_left, as_dict=True, maintain_order=True
-    )
-    data_groups = data_subset.partition_by(join_left, as_dict=True, maintain_order=True)
-    data_groups_normalized = {
-        _normalize_group_key(key): group for key, group in data_groups.items()
-    }
-
-    # Determine output dtype per action up-front (numeric float64, or object
-    # for KeepLongest on non-numeric columns).
-    is_categorical: Dict[str, bool] = {}
-    output_arrays: Dict[str, np.ndarray] = {}
+    categorical_actions = []
+    numeric_actions = []
     for action in column_actions:
-        agg_type_value = action.aggregation.type.value
         column_dtype = data_df.schema.get(action.column_name)
         if (
-            agg_type_value == AGG_KEEP_LONGEST
+            action.aggregation.type.value == AGG_KEEP_LONGEST
             and column_dtype is not None
             and not _is_numeric_dtype(column_dtype)
         ):
-            is_categorical[action.rename] = True
-            output_arrays[action.rename] = np.full(n_target, None, dtype=object)
+            categorical_actions.append(action)
         else:
-            is_categorical[action.rename] = False
-            output_arrays[action.rename] = np.full(n_target, np.nan, dtype=np.float64)
+            numeric_actions.append(action)
 
-    def _process_group(
-        key: Any, tgt_group: pl.DataFrame
-    ) -> Optional[Tuple[np.ndarray, Dict[str, np.ndarray]]]:
-        data_group = data_groups_normalized.get(_normalize_group_key(key))
-        if data_group is None or data_group.height == 0:
-            return None
-
-        tgt_starts = tgt_group[slk_from].to_numpy().astype(np.float64)
-        tgt_ends = tgt_group[slk_to].to_numpy().astype(np.float64)
-        tgt_lengths = tgt_ends - tgt_starts
-        tgt_row_positions = tgt_group[_ROW_IDX_COL].to_numpy().astype(np.int64)
-
-        data_starts = data_group[slk_from].to_numpy().astype(np.float64)
-        data_ends = data_group[slk_to].to_numpy().astype(np.float64)
-        data_lengths = data_group[_SEGMENT_LEN_COL].to_numpy().astype(np.float64)
-        original_indices = data_group[_DATA_IDX_COL].to_numpy().astype(np.int64)
-
-        tgt_idx, data_idx, overlap_lens = _find_overlapping_intervals_sorted(
-            tgt_starts, tgt_ends, data_starts, data_ends
-        )
-        if len(tgt_idx) == 0:
-            return None
-
-        group_results: Dict[str, np.ndarray] = {}
-        for action in column_actions:
-            rename = action.rename
-            agg_type, percentile = _get_agg_type_code(action.aggregation)
-
-            if is_categorical[rename]:
-                col_values = np.array(
-                    data_group[action.column_name].to_list(), dtype=object
-                )
-                agg_results = _aggregate_keep_longest_categorical(
-                    n_targets=tgt_group.height,
-                    tgt_indices=tgt_idx,
-                    data_indices=data_idx,
-                    overlap_lens=overlap_lens,
-                    col_values=col_values,
-                )
-            else:
-                col_values = (
-                    data_group[action.column_name].to_numpy().astype(np.float64)
-                )
-                agg_results = _aggregate_all_targets_numeric(
-                    n_targets=tgt_group.height,
-                    tgt_indices=tgt_idx,
-                    data_indices=data_idx,
-                    overlap_lens=overlap_lens,
-                    col_values=col_values,
-                    data_lengths=data_lengths,
-                    original_indices=original_indices,
-                    target_lengths=tgt_lengths,
-                    agg_type=agg_type,
-                    percentile=percentile,
-                )
-            group_results[rename] = agg_results
-
-        return tgt_row_positions, group_results
-
-    group_items = list(target_groups.items())
-    max_workers = n_jobs or min(32, (os.cpu_count() or 1))
-
+    target_ids, data_ids = _grouped.polars_group_ids(target_df, data_df, join_left)
+    total_groups = int(np.count_nonzero(np.bincount(target_ids[target_ids >= 0])))
     if verbose:
         print(
             f"[pyroads.merge] Polars merge: {len(column_actions)} action(s), "
-            f"{len(group_items)} group(s), {max_workers} worker thread(s)."
+            f"{total_groups} group(s)."
         )
 
-    if max_workers <= 1 or len(group_items) <= 1:
-        for key, tgt_group in group_items:
-            outcome = _process_group(key, tgt_group)
-            if outcome is None:
-                continue
-            positions, group_results = outcome
-            for rename, values in group_results.items():
-                output_arrays[rename][positions] = values
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(_process_group, key, tgt_group)
-                for key, tgt_group in group_items
-            ]
-            for future in futures:
-                outcome = future.result()
-                if outcome is None:
-                    continue
-                positions, group_results = outcome
-                for rename, values in group_results.items():
-                    output_arrays[rename][positions] = values
+    def as_float(column: str) -> np.ndarray:
+        return data_df[column].to_numpy().astype(np.float64, copy=False)
 
-    result = target_df.clone()
-    for action in column_actions:
-        rename = action.rename
-        values = output_arrays[rename]
-        if is_categorical[rename]:
-            result = result.with_columns(pl.Series(rename, values.tolist()))
-        else:
-            result = result.with_columns(pl.Series(rename, values, dtype=pl.Float64))
+    factorized = {
+        column_name: _grouped.factorize(data_df[column_name].to_list())
+        for column_name in dict.fromkeys(action.column_name for action in categorical_actions)
+    }
+    agg_codes = [_get_agg_type_code(action.aggregation) for action in numeric_actions]
+    numeric_results, categorical_results = _grouped.merge_groups(
+        target_ids,
+        target_df[slk_from].to_numpy().astype(np.float64, copy=False),
+        target_df[slk_to].to_numpy().astype(np.float64, copy=False),
+        data_ids,
+        as_float(slk_from),
+        as_float(slk_to),
+        np.arange(data_df.height, dtype=np.int64),
+        numeric_values=[as_float(action.column_name) for action in numeric_actions],
+        agg_types=[agg_type for agg_type, _ in agg_codes],
+        percentiles=[percentile for _, percentile in agg_codes],
+        category_codes=[factorized[action.column_name][0] for action in categorical_actions],
+        n_threads=n_jobs or 0,
+    )
+
+    output_columns: Dict[str, pl.Series] = {}
+    for action, values in zip(numeric_actions, numeric_results):
+        output_columns[action.rename] = pl.Series(action.rename, values, dtype=pl.Float64)
+    for action, codes in zip(categorical_actions, categorical_results):
+        values = _grouped.decode(codes, factorized[action.column_name][1])
+        output_columns[action.rename] = pl.Series(action.rename, values.tolist())
+    result = target_df.with_columns(
+        [output_columns[action.rename] for action in column_actions]
+    )
 
     elapsed = time.perf_counter() - start_time
     if verbose:
@@ -404,9 +300,9 @@ def on_slk_intervals_polars(
             merge_module._emit_performance_event(
                 "on_slk_intervals_polars",
                 duration=elapsed,
-                groups=float(len(group_items)),
+                groups=float(total_groups),
                 actions=float(len(column_actions)),
-                rows=float(n_target),
+                rows=float(target_df.height),
             )
     except Exception:
         pass  # Performance logging is optional
