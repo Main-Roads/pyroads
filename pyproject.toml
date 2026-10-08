@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 polars = ["polars"]
-dev = ["pytest", "pre-commit", "ruff", "pyright"]
+dev = ["pytest", "pre-commit", "ruff", "pyright", "pyarrow"]
 
 [tool.maturin]
 manifest-path = "rust/_native/Cargo.toml"

@@ -30,10 +30,15 @@ jobs:
           enable-cache: true
 
       - name: Install development dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra polars
 
       - name: Run tests
         run: uv run pytest
+
+      - name: Run Rust tests
+        run: cargo test --release --manifest-path rust/_native/Cargo.toml
+        env:
+          PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
 
       - name: Run Ruff
         run: uv run ruff check src

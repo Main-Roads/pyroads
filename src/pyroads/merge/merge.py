@@ -676,14 +676,15 @@ def on_slk_intervals(
     if _detect_dataframe_backend(target, data) == "polars":
         from ._polars_merge import on_slk_intervals_polars
 
-        return on_slk_intervals_polars(
-            target=target,
-            data=data,
+        polars_result: Any = on_slk_intervals_polars(
+            target=cast(Any, target),
+            data=cast(Any, data),
             join_left=join_left,
             column_actions=column_actions,
             from_to=from_to,
             verbose=verbose,
         )
+        return polars_result
 
     # Keep the legacy flag for backwards compatibility; True selects the old path.
     if legacy:
