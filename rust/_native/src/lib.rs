@@ -1329,6 +1329,281 @@ fn keep_longest_code(pairs: impl Iterator<Item = (i64, f64)>) -> i64 {
     best_code
 }
 
+const GROUP_TARGET_BLOCK: usize = 1_024;
+
+/// Split `items` into consecutive row blocks described by `offsets`.
+fn split_by_offsets<'a, T>(
+    mut rest: &'a mut [T],
+    offsets: &[usize],
+    width: usize,
+) -> Vec<&'a mut [T]> {
+    let mut chunks = Vec::with_capacity(offsets.len().saturating_sub(1));
+    for window in offsets.windows(2) {
+        let (head, tail) = std::mem::take(&mut rest).split_at_mut((window[1] - window[0]) * width);
+        chunks.push(head);
+        rest = tail;
+    }
+    chunks
+}
+
+fn check_offsets(name: &str, offsets: &[usize], total: usize) -> Result<(), String> {
+    if offsets.first() != Some(&0) || offsets.last() != Some(&total) {
+        return Err(format!("{name} must start at 0 and end at {total}"));
+    }
+    if offsets.windows(2).any(|window| window[1] < window[0]) {
+        return Err(format!("{name} must be non-decreasing"));
+    }
+    Ok(())
+}
+
+/// Rows of target and data sorted by group; each group's rows are given by the offsets.
+/// Value matrices are row-major with one row per action.
+struct GroupedMerge<'a> {
+    target_starts: &'a [f64],
+    target_ends: &'a [f64],
+    target_offsets: &'a [usize],
+    data_starts: &'a [f64],
+    data_ends: &'a [f64],
+    data_offsets: &'a [usize],
+    original_indices: &'a [i64],
+    numeric_values: &'a [f64],
+    agg_types: &'a [i64],
+    percentiles: &'a [f64],
+    category_codes: &'a [i64],
+    n_categorical: usize,
+}
+
+impl GroupedMerge<'_> {
+    fn validate(&self) -> Result<(), String> {
+        let n_targets = self.target_starts.len();
+        let n_data = self.data_starts.len();
+        let n_numeric = self.agg_types.len();
+        if self.target_ends.len() != n_targets {
+            return Err("target start and end arrays must have matching lengths".into());
+        }
+        if self.data_ends.len() != n_data || self.original_indices.len() != n_data {
+            return Err("data interval and index arrays must have matching lengths".into());
+        }
+        if self.percentiles.len() != n_numeric || self.numeric_values.len() != n_numeric * n_data {
+            return Err("numeric action arrays have inconsistent shapes".into());
+        }
+        if self.category_codes.len() != self.n_categorical * n_data {
+            return Err("category code array has an inconsistent shape".into());
+        }
+        if self.target_offsets.len() != self.data_offsets.len() {
+            return Err("target and data offsets must describe the same groups".into());
+        }
+        check_offsets("target_offsets", self.target_offsets, n_targets)?;
+        check_offsets("data_offsets", self.data_offsets, n_data)
+    }
+
+    fn run(&self) -> (Vec<f64>, Vec<i64>) {
+        let groups = self.target_offsets.len().saturating_sub(1);
+        self.run_with(groups > 1 && self.target_starts.len() >= PARALLEL_MIN_ITEMS)
+    }
+
+    /// Returns row-major `(n_targets, n_numeric)` and `(n_targets, n_categorical)` results.
+    fn run_with(&self, parallel: bool) -> (Vec<f64>, Vec<i64>) {
+        let n_targets = self.target_starts.len();
+        let n_numeric = self.agg_types.len();
+        let mut numeric = vec![f64::NAN; n_targets * n_numeric];
+        let mut categorical = vec![-1_i64; n_targets * self.n_categorical];
+        let numeric_chunks = split_by_offsets(&mut numeric, self.target_offsets, n_numeric);
+        let categorical_chunks =
+            split_by_offsets(&mut categorical, self.target_offsets, self.n_categorical);
+        if parallel {
+            numeric_chunks
+                .into_par_iter()
+                .zip(categorical_chunks)
+                .enumerate()
+                .for_each(|(group, (numeric_out, categorical_out))| {
+                    self.merge_group(group, numeric_out, categorical_out, true)
+                });
+        } else {
+            numeric_chunks
+                .into_iter()
+                .zip(categorical_chunks)
+                .enumerate()
+                .for_each(|(group, (numeric_out, categorical_out))| {
+                    self.merge_group(group, numeric_out, categorical_out, false)
+                });
+        }
+        (numeric, categorical)
+    }
+
+    fn merge_group(
+        &self,
+        group: usize,
+        numeric_out: &mut [f64],
+        categorical_out: &mut [i64],
+        parallel: bool,
+    ) {
+        let (target_first, target_last) = (self.target_offsets[group], self.target_offsets[group + 1]);
+        let (data_first, data_last) = (self.data_offsets[group], self.data_offsets[group + 1]);
+        if target_first == target_last || data_first == data_last {
+            return;
+        }
+        let target_starts = &self.target_starts[target_first..target_last];
+        let target_ends = &self.target_ends[target_first..target_last];
+        let (target_indices, data_indices, overlap_lengths) = find_overlaps(
+            target_starts,
+            target_ends,
+            &self.data_starts[data_first..data_last],
+            &self.data_ends[data_first..data_last],
+        );
+        if target_indices.is_empty() {
+            return;
+        }
+
+        // find_overlaps emits pairs in target order, so a prefix sum gives each target's range.
+        let n_targets = target_last - target_first;
+        let mut pair_offsets = vec![0usize; n_targets + 1];
+        for &target in &target_indices {
+            pair_offsets[target as usize + 1] += 1;
+        }
+        for target in 0..n_targets {
+            pair_offsets[target + 1] += pair_offsets[target];
+        }
+
+        let n_numeric = self.agg_types.len();
+        let n_data = self.data_starts.len();
+        let fill_block = |block_first: usize,
+                          block_last: usize,
+                          numeric_rows: &mut [f64],
+                          categorical_rows: &mut [i64]| {
+            let mut values = Vec::new();
+            for target in block_first..block_last {
+                let (start, end) = (pair_offsets[target], pair_offsets[target + 1]);
+                if start == end {
+                    continue;
+                }
+                let rows: Vec<usize> = data_indices[start..end]
+                    .iter()
+                    .map(|&data_index| data_first + data_index as usize)
+                    .collect();
+                let overlaps = &overlap_lengths[start..end];
+                let data_lengths: Vec<f64> = rows
+                    .iter()
+                    .map(|&row| self.data_ends[row] - self.data_starts[row])
+                    .collect();
+                let original: Vec<i64> = rows.iter().map(|&row| self.original_indices[row]).collect();
+                let target_length = target_ends[target] - target_starts[target];
+                let local = target - block_first;
+                for action in 0..n_numeric {
+                    let column = &self.numeric_values[action * n_data..(action + 1) * n_data];
+                    values.clear();
+                    values.extend(rows.iter().map(|&row| column[row]));
+                    numeric_rows[local * n_numeric + action] = aggregate_target(
+                        &values,
+                        overlaps,
+                        &data_lengths,
+                        &original,
+                        target_length,
+                        self.agg_types[action],
+                        self.percentiles[action],
+                    );
+                }
+                for action in 0..self.n_categorical {
+                    let column = &self.category_codes[action * n_data..(action + 1) * n_data];
+                    categorical_rows[local * self.n_categorical + action] = keep_longest_code(
+                        rows.iter().zip(overlaps).map(|(&row, &overlap)| (column[row], overlap)),
+                    );
+                }
+            }
+        };
+
+        if parallel && n_targets > GROUP_TARGET_BLOCK {
+            let mut blocks: Vec<usize> = (0..n_targets).step_by(GROUP_TARGET_BLOCK).collect();
+            blocks.push(n_targets);
+            let numeric_blocks = split_by_offsets(numeric_out, &blocks, n_numeric);
+            let categorical_blocks = split_by_offsets(categorical_out, &blocks, self.n_categorical);
+            numeric_blocks
+                .into_par_iter()
+                .zip(categorical_blocks)
+                .enumerate()
+                .for_each(|(block, (numeric_rows, categorical_rows))| {
+                    fill_block(blocks[block], blocks[block + 1], numeric_rows, categorical_rows)
+                });
+        } else {
+            fill_block(0, n_targets, numeric_out, categorical_out);
+        }
+    }
+}
+
+fn to_offsets(name: &str, offsets: &[i64]) -> PyResult<Vec<usize>> {
+    offsets
+        .iter()
+        .map(|&offset| {
+            usize::try_from(offset).map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!("{name} must be non-negative"))
+            })
+        })
+        .collect()
+}
+
+/// Merge every group in one call, releasing the GIL. `n_threads == 0` uses the global pool.
+#[pyfunction]
+#[pyo3(signature = (
+    target_starts, target_ends, target_offsets, data_starts, data_ends, data_offsets,
+    original_indices, numeric_values, agg_types, percentiles, category_codes, n_threads = 0
+))]
+#[allow(clippy::too_many_arguments)]
+fn merge_groups<'py>(
+    py: Python<'py>,
+    target_starts: PyReadonlyArray1<'py, f64>,
+    target_ends: PyReadonlyArray1<'py, f64>,
+    target_offsets: PyReadonlyArray1<'py, i64>,
+    data_starts: PyReadonlyArray1<'py, f64>,
+    data_ends: PyReadonlyArray1<'py, f64>,
+    data_offsets: PyReadonlyArray1<'py, i64>,
+    original_indices: PyReadonlyArray1<'py, i64>,
+    numeric_values: PyReadonlyArray2<'py, f64>,
+    agg_types: PyReadonlyArray1<'py, i64>,
+    percentiles: PyReadonlyArray1<'py, f64>,
+    category_codes: PyReadonlyArray2<'py, i64>,
+    n_threads: usize,
+) -> PyResult<(Py<PyArray1<f64>>, Py<PyArray1<i64>>)> {
+    let target_offsets = to_offsets("target_offsets", target_offsets.as_slice()?)?;
+    let data_offsets = to_offsets("data_offsets", data_offsets.as_slice()?)?;
+    let n_categorical = category_codes.shape()[0];
+    let merge = GroupedMerge {
+        target_starts: target_starts.as_slice()?,
+        target_ends: target_ends.as_slice()?,
+        target_offsets: &target_offsets,
+        data_starts: data_starts.as_slice()?,
+        data_ends: data_ends.as_slice()?,
+        data_offsets: &data_offsets,
+        original_indices: original_indices.as_slice()?,
+        numeric_values: numeric_values.as_slice()?,
+        agg_types: agg_types.as_slice()?,
+        percentiles: percentiles.as_slice()?,
+        category_codes: category_codes.as_slice()?,
+        n_categorical,
+    };
+    merge
+        .validate()
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    let (numeric, categorical) = py
+        .detach(|| {
+            if n_threads == 0 {
+                Ok(merge.run())
+            } else {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(n_threads)
+                    .build()
+                    .map(|pool| pool.install(|| merge.run()))
+                    .map_err(|error| error.to_string())
+            }
+        })
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+    Ok((
+        PyArray1::from_vec(py, numeric).unbind(),
+        PyArray1::from_vec(py, categorical).unbind(),
+    ))
+}
+
 fn linspace_steps_impl(
     measure_from: f64,
     measure_to: f64,
@@ -1792,6 +2067,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(aggregate_all_targets_numeric_batch, m)?)?;
     m.add_function(wrap_pyfunction!(merge_numeric_group, m)?)?;
     m.add_function(wrap_pyfunction!(aggregate_keep_longest_categorical, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_groups, m)?)?;
     m.add_function(wrap_pyfunction!(linspace_steps_batch, m)?)?;
     m.add_function(wrap_pyfunction!(optimal_bisections_pq, m)?)?;
     m.add_function(wrap_pyfunction!(optimal_bisections_pq_full, m)?)?;
@@ -1807,4 +2083,151 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(overlay_events, m)?)?;
     m.add_function(wrap_pyfunction!(cross_sections, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Owned {
+        target_starts: Vec<f64>,
+        target_ends: Vec<f64>,
+        target_offsets: Vec<usize>,
+        data_starts: Vec<f64>,
+        data_ends: Vec<f64>,
+        data_offsets: Vec<usize>,
+        original_indices: Vec<i64>,
+        numeric_values: Vec<f64>,
+        agg_types: Vec<i64>,
+        percentiles: Vec<f64>,
+        category_codes: Vec<i64>,
+        n_categorical: usize,
+    }
+
+    impl Owned {
+        fn merge(&self) -> GroupedMerge<'_> {
+            GroupedMerge {
+                target_starts: &self.target_starts,
+                target_ends: &self.target_ends,
+                target_offsets: &self.target_offsets,
+                data_starts: &self.data_starts,
+                data_ends: &self.data_ends,
+                data_offsets: &self.data_offsets,
+                original_indices: &self.original_indices,
+                numeric_values: &self.numeric_values,
+                agg_types: &self.agg_types,
+                percentiles: &self.percentiles,
+                category_codes: &self.category_codes,
+                n_categorical: self.n_categorical,
+            }
+        }
+    }
+
+    fn small_case() -> Owned {
+        // Group 0 has two targets and two data rows, group 1 has no data,
+        // group 2 has data but no targets.
+        Owned {
+            target_starts: vec![0.0, 10.0, 0.0],
+            target_ends: vec![10.0, 20.0, 10.0],
+            target_offsets: vec![0, 2, 3, 3],
+            data_starts: vec![0.0, 5.0, 0.0],
+            data_ends: vec![15.0, 20.0, 10.0],
+            data_offsets: vec![0, 2, 2, 3],
+            original_indices: vec![0, 1, 2],
+            numeric_values: vec![1.0, 3.0, 9.0, 1.0, 3.0, 9.0],
+            agg_types: vec![AGG_LENGTH_WEIGHTED_AVERAGE, AGG_SUM],
+            percentiles: vec![0.0, 0.0],
+            category_codes: vec![0, 1, 2],
+            n_categorical: 1,
+        }
+    }
+
+    #[test]
+    fn merges_each_group_independently() {
+        let case = small_case();
+        let merge = case.merge();
+        merge.validate().unwrap();
+        let (numeric, categorical) = merge.run_with(false);
+
+        assert!((numeric[0] - 25.0 / 15.0).abs() < 1e-12);
+        assert_eq!(numeric[1], 4.0);
+        assert!((numeric[2] - 35.0 / 15.0).abs() < 1e-12);
+        assert_eq!(numeric[3], 4.0);
+        assert!(numeric[4].is_nan() && numeric[5].is_nan());
+        assert_eq!(categorical, vec![0, 1, -1]);
+    }
+
+    #[test]
+    fn keep_longest_code_breaks_ties_by_first_seen() {
+        assert_eq!(keep_longest_code([(4, 5.0), (2, 5.0)].into_iter()), 4);
+        assert_eq!(keep_longest_code([(4, 5.0), (2, 3.0), (2, 3.0)].into_iter()), 2);
+        assert_eq!(keep_longest_code([(-1, 5.0)].into_iter()), -1);
+    }
+
+    #[test]
+    fn rejects_inconsistent_offsets() {
+        let mut case = small_case();
+        case.data_offsets = vec![0, 2, 3];
+        assert!(case.merge().validate().is_err());
+        let mut case = small_case();
+        case.target_offsets = vec![0, 2, 1, 3];
+        assert!(case.merge().validate().is_err());
+        let mut case = small_case();
+        case.target_offsets = vec![0, 2, 3, 4];
+        assert!(case.merge().validate().is_err());
+    }
+
+    #[test]
+    fn parallel_matches_serial() {
+        let mut seed = 42_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) as f64 / (1_u64 << 31) as f64
+        };
+        let (groups, targets_per_group, data_per_group) = (6, 3_000, 4_000);
+        let mut case = Owned {
+            target_starts: Vec::new(),
+            target_ends: Vec::new(),
+            target_offsets: vec![0],
+            data_starts: Vec::new(),
+            data_ends: Vec::new(),
+            data_offsets: vec![0],
+            original_indices: Vec::new(),
+            numeric_values: Vec::new(),
+            agg_types: vec![AGG_LENGTH_WEIGHTED_PERCENTILE, AGG_FIRST, AGG_KEEP_LONGEST],
+            percentiles: vec![0.9, 0.0, 0.0],
+            category_codes: Vec::new(),
+            n_categorical: 1,
+        };
+        let mut values = Vec::new();
+        for _ in 0..groups {
+            for target in 0..targets_per_group {
+                case.target_starts.push(target as f64 * 10.0);
+                case.target_ends.push(target as f64 * 10.0 + 10.0);
+            }
+            for _ in 0..data_per_group {
+                let start = (next() * targets_per_group as f64 * 10.0).floor();
+                case.data_starts.push(start);
+                case.data_ends.push(start + 1.0 + (next() * 25.0).floor());
+                case.original_indices.push(case.original_indices.len() as i64);
+                values.push((next() * 5.0).floor());
+                case.category_codes.push((next() * 4.0) as i64);
+            }
+            case.target_offsets.push(case.target_starts.len());
+            case.data_offsets.push(case.data_starts.len());
+        }
+        for _ in 0..case.agg_types.len() {
+            case.numeric_values.extend(&values);
+        }
+
+        let merge = case.merge();
+        merge.validate().unwrap();
+        let (serial_numeric, serial_categorical) = merge.run_with(false);
+        let (parallel_numeric, parallel_categorical) = merge.run_with(true);
+        assert_eq!(serial_categorical, parallel_categorical);
+        assert_eq!(serial_numeric.len(), parallel_numeric.len());
+        for (left, right) in serial_numeric.iter().zip(&parallel_numeric) {
+            assert!(left.to_bits() == right.to_bits(), "{left} != {right}");
+        }
+    }
 }
