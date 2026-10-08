@@ -150,7 +150,24 @@ result = on_slk_intervals(
 `on_slk_intervals()` uses the optimized implementation by default. The
 compatibility flag remains available: pass `legacy=True` to use the legacy
 implementation, or `legacy=False` explicitly to select the optimized path.
-The optional `polars` extra provides a Polars-native backend.
+The optional `polars` extra provides a Polars-native backend; pass Polars
+DataFrames for both `target` and `data` to use it. Both backends merge every
+join group in a single native call and return identical results. Rows whose
+join key contains a missing value are not matched and receive empty results.
+
+#### Threads
+
+The native merge runs join groups in parallel on a Rayon thread pool. Two
+independent pools may be active, each sized to all logical CPUs by default:
+
+| Environment variable | Controls |
+| --- | --- |
+| `RAYON_NUM_THREADS` | pyroads native kernels |
+| `POLARS_MAX_THREADS` | Polars' own query engine |
+
+Set both before importing `pyroads` or `polars`; each pool reads its variable
+only once, when it is created. `on_slk_intervals_polars(..., n_jobs=4)` runs a
+single merge on a dedicated pool of that size instead.
 
 ### Fetching Main Roads WA data
 
@@ -260,6 +277,7 @@ The Rust crate can be checked independently:
 ```bash
 cargo fmt --manifest-path rust/_native/Cargo.toml -- --check
 cargo check --manifest-path rust/_native/Cargo.toml
+cargo test --release --manifest-path rust/_native/Cargo.toml
 ```
 
 ### Build and inspect distribution artifacts
@@ -301,8 +319,8 @@ On Windows, replace the virtual environment Python path with
 
 The Python modules import `pyroads._native` when available. If the extension
 cannot be imported, the existing Numba/Python implementations remain usable
-and print a fallback notice. No environment variable is needed to select the
-backend.
+and emit a one-time `RuntimeWarning`. No environment variable is needed to
+select the backend.
 
 For local Rust work, build the extension in release mode through the root
 package configuration:
@@ -355,6 +373,15 @@ uv run python examples/merge/compare_merges.py \
 	--data-file data.csv \
 	--repeats 5
 ```
+
+Compare pandas and Polars inputs for the same merge:
+
+```bash
+uv run --extra polars python examples/merge/benchmark_backends.py --roads 2000
+```
+
+A smaller run of this comparison executes in the test suite and fails if the
+Polars path is more than 1.5 times slower than pandas.
 
 For notebooks, start Jupyter through the locked environment:
 

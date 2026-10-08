@@ -36,7 +36,9 @@ jobs:
         run: uv run pytest
 
       - name: Run Rust tests
-        run: cargo test --release --manifest-path rust/_native/Cargo.toml
+        run: |
+          cargo fmt --manifest-path rust/_native/Cargo.toml -- --check
+          cargo test --release --manifest-path rust/_native/Cargo.toml
         env:
           PYO3_PYTHON: ${{ github.workspace }}/.venv/bin/python
 
