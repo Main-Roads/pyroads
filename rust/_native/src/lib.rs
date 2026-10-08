@@ -325,11 +325,11 @@ fn cumulative_p<'py>(
             * left_n
             / (left_n - 1.0))
             .sqrt();
-        let right =
-            ((right_n * right_square_sum[index] / (right_sum[index] * right_sum[index]) - 1.0)
-                * right_n
-                / (right_n - 1.0))
-                .sqrt();
+        let right = ((right_n * right_square_sum[index] / (right_sum[index] * right_sum[index])
+            - 1.0)
+            * right_n
+            / (right_n - 1.0))
+            .sqrt();
         (left + right) / 2.0
     });
     Ok(PyArray1::from_vec(py, result).unbind())
@@ -1293,10 +1293,12 @@ fn aggregate_keep_longest_categorical<'py>(
         |target, result| {
             let start = offsets[target];
             let end = offsets[target + 1];
-            *result = keep_longest_code(
-                (start..end)
-                    .map(|position| (codes[grouped_data_indices[position]], grouped_overlaps[position])),
-            );
+            *result = keep_longest_code((start..end).map(|position| {
+                (
+                    codes[grouped_data_indices[position]],
+                    grouped_overlaps[position],
+                )
+            }));
         },
     );
     Ok(PyArray1::from_vec(py, results).unbind())
@@ -1438,7 +1440,8 @@ impl GroupedMerge<'_> {
         categorical_out: &mut [i64],
         parallel: bool,
     ) {
-        let (target_first, target_last) = (self.target_offsets[group], self.target_offsets[group + 1]);
+        let (target_first, target_last) =
+            (self.target_offsets[group], self.target_offsets[group + 1]);
         let (data_first, data_last) = (self.data_offsets[group], self.data_offsets[group + 1]);
         if target_first == target_last || data_first == data_last {
             return;
@@ -1486,7 +1489,8 @@ impl GroupedMerge<'_> {
                     .iter()
                     .map(|&row| self.data_ends[row] - self.data_starts[row])
                     .collect();
-                let original: Vec<i64> = rows.iter().map(|&row| self.original_indices[row]).collect();
+                let original: Vec<i64> =
+                    rows.iter().map(|&row| self.original_indices[row]).collect();
                 let target_length = target_ends[target] - target_starts[target];
                 let local = target - block_first;
                 for action in 0..n_numeric {
@@ -1506,7 +1510,9 @@ impl GroupedMerge<'_> {
                 for action in 0..self.n_categorical {
                     let column = &self.category_codes[action * n_data..(action + 1) * n_data];
                     categorical_rows[local * self.n_categorical + action] = keep_longest_code(
-                        rows.iter().zip(overlaps).map(|(&row, &overlap)| (column[row], overlap)),
+                        rows.iter()
+                            .zip(overlaps)
+                            .map(|(&row, &overlap)| (column[row], overlap)),
                     );
                 }
             }
@@ -1522,7 +1528,12 @@ impl GroupedMerge<'_> {
                 .zip(categorical_blocks)
                 .enumerate()
                 .for_each(|(block, (numeric_rows, categorical_rows))| {
-                    fill_block(blocks[block], blocks[block + 1], numeric_rows, categorical_rows)
+                    fill_block(
+                        blocks[block],
+                        blocks[block + 1],
+                        numeric_rows,
+                        categorical_rows,
+                    )
                 });
         } else {
             fill_block(0, n_targets, numeric_out, categorical_out);
@@ -1697,16 +1708,17 @@ fn fixed_segment_boundaries_batch<'py>(
         ));
     }
     let row_count = measure_from.len();
-    let rows: Vec<Vec<f64>> = collect_indexed(row_count, row_count >= PARALLEL_MIN_ITEMS, |index| {
-        let start = measure_from[index];
-        let end = measure_to[index];
-        let count = ((end - start) / segment_length).ceil().max(0.0) as usize;
-        let mut boundaries: Vec<f64> = (0..count)
-            .map(|part| start + part as f64 * segment_length)
-            .collect();
-        boundaries.push(end);
-        boundaries
-    });
+    let rows: Vec<Vec<f64>> =
+        collect_indexed(row_count, row_count >= PARALLEL_MIN_ITEMS, |index| {
+            let start = measure_from[index];
+            let end = measure_to[index];
+            let count = ((end - start) / segment_length).ceil().max(0.0) as usize;
+            let mut boundaries: Vec<f64> = (0..count)
+                .map(|part| start + part as f64 * segment_length)
+                .collect();
+            boundaries.push(end);
+            boundaries
+        });
     let mut values = Vec::new();
     let mut offsets = Vec::with_capacity(rows.len() + 1);
     offsets.push(0_i64);
@@ -1735,12 +1747,13 @@ fn fixed_segment_rows<'py>(
         ));
     }
     let row_count = measure_from.len();
-    let rows: Vec<Vec<i64>> = collect_indexed(row_count, row_count >= PARALLEL_MIN_ITEMS, |index| {
-        let count = ((measure_to[index] - measure_from[index]) / segment_length)
-            .ceil()
-            .max(0.0) as usize;
-        (0..count).map(|part| part as i64).collect()
-    });
+    let rows: Vec<Vec<i64>> =
+        collect_indexed(row_count, row_count >= PARALLEL_MIN_ITEMS, |index| {
+            let count = ((measure_to[index] - measure_from[index]) / segment_length)
+                .ceil()
+                .max(0.0) as usize;
+            (0..count).map(|part| part as i64).collect()
+        });
     let mut source_indices = Vec::new();
     let mut part_indices = Vec::new();
     for (source, parts) in rows.into_iter().enumerate() {
@@ -2160,7 +2173,10 @@ mod tests {
     #[test]
     fn keep_longest_code_breaks_ties_by_first_seen() {
         assert_eq!(keep_longest_code([(4, 5.0), (2, 5.0)].into_iter()), 4);
-        assert_eq!(keep_longest_code([(4, 5.0), (2, 3.0), (2, 3.0)].into_iter()), 2);
+        assert_eq!(
+            keep_longest_code([(4, 5.0), (2, 3.0), (2, 3.0)].into_iter()),
+            2
+        );
         assert_eq!(keep_longest_code([(-1, 5.0)].into_iter()), -1);
     }
 
@@ -2209,7 +2225,8 @@ mod tests {
                 let start = (next() * targets_per_group as f64 * 10.0).floor();
                 case.data_starts.push(start);
                 case.data_ends.push(start + 1.0 + (next() * 25.0).floor());
-                case.original_indices.push(case.original_indices.len() as i64);
+                case.original_indices
+                    .push(case.original_indices.len() as i64);
                 values.push((next() * 5.0).floor());
                 case.category_codes.push((next() * 4.0) as i64);
             }
