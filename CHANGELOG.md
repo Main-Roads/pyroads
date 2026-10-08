@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.0 - 2026-10-08
+
+### Performance
+
+- Interval merges now process every join group in one native call that
+  releases the GIL and runs groups in parallel. On a 4,000-group benchmark
+  (200k target rows, 800k data rows) Polars inputs went from 17.0s to 0.27s
+  and pandas inputs from 2.5s to 0.25s; with a categorical `KeepLongest`
+  action, from 23.4s to 0.61s (Polars) and 8.7s to 0.51s (pandas).
+- Native kernels run serially on small inputs instead of waking the Rayon
+  thread pool for every call.
+
+### Changed
+
+- Polars merges no longer match rows whose join key is missing, consistent
+  with the pandas backend.
+- `on_slk_intervals_polars(n_jobs=...)` now sizes the native thread pool; the
+  Python thread pool was removed. Non-positive values raise `ValueError`.
+- The Numba fallback notice is a one-time `RuntimeWarning` instead of a
+  message printed on every call.
+
+### Added
+
+- `examples/merge/benchmark_backends.py` and a test that fails when Polars
+  merges are more than 1.5 times slower than pandas.
+- CI runs the Polars tests, Rust unit tests, and `cargo fmt --check`.
+
 ## 0.7.0 - 2026-09-29
 
 ### Performance
